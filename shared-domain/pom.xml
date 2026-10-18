@@ -25,6 +25,36 @@
       <artifactId>jakarta.persistence-api</artifactId>
     </dependency>
 
+    <!--
+      Hibernate, SOLO en tiempo de compilación (scope provided).
+
+      Esto es un retroceso respecto de "en este módulo no entra ningún
+      framework" y conviene decirlo en voz alta. La causa concreta: las
+      columnas JSONB necesitan @JdbcTypeCode(SqlTypes.JSON), que es de
+      Hibernate y no de JPA — el estándar no tiene forma de expresar un
+      jsonb de Postgres.
+
+      Las alternativas que se evaluaron:
+        - Bajar esas columnas a TEXT. Funciona con JPA puro, pero se
+          pierden la validación del JSON y los operadores (->>) que
+          sirven justo cuando estás depurando por qué un campo salió del
+          OCR en vez del QR.
+        - AttributeConverter a String + stringtype=unspecified en la URL
+          de JDBC. También evita Hibernate acá, pero cambia el binding de
+          TODOS los parámetros de texto de la aplicación para resolver un
+          problema de tres columnas.
+
+      Se eligió esto porque Hibernate es la implementación de referencia
+      de JPA, el módulo ya habla JPA, y `provided` deja explícito que en
+      runtime lo aporta quien lo use. Spring sigue sin entrar: esa es la
+      línea que importa.
+    -->
+    <dependency>
+      <groupId>org.hibernate.orm</groupId>
+      <artifactId>hibernate-core</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

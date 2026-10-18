@@ -27,7 +27,7 @@ CREATE TABLE documents (
     storage_key       VARCHAR(512) NOT NULL,
     mime_type         VARCHAR(100) NOT NULL,
     file_size_bytes   BIGINT       NOT NULL,
-    content_hash      CHAR(64)     NOT NULL,
+    content_hash      VARCHAR(64)  NOT NULL,
     source_type       VARCHAR(20)  NOT NULL,
     -- Se completa al terminar la extracción. Alimenta la métrica más
     -- importante del sistema: la tasa de detección de QR.
@@ -108,18 +108,18 @@ CREATE TABLE extracted_invoice_data (
     -- ── Campos del QR de ARCA (RG 4892) ──
     -- Exactos cuando hay QR legible. Nullable porque un comprobante sin
     -- QR o ilegible igual genera una fila: el usuario la completa a mano.
-    issuer_cuit             NUMERIC(11),
+    issuer_cuit             BIGINT,
     invoice_type_code       INT,              -- tabla oficial: 1=Fact A, 6=B, 11=C...
     point_of_sale           INT,
     invoice_number          BIGINT,
     issue_date              DATE,
     total                   NUMERIC(15, 2),
-    currency                CHAR(3),          -- "PES", "DOL", ...
+    currency                VARCHAR(3),       -- "PES", "DOL", ...
     exchange_rate           NUMERIC(19, 6),   -- 6 decimales según la especificación
     recipient_doc_type      INT,              -- 80=CUIT, 86=CUIL, 96=DNI, 99=sin identificar
     recipient_doc_number    NUMERIC(20),
-    cae                     NUMERIC(14),
-    auth_code_type          CHAR(1),          -- "E"=CAE, "A"=CAEA
+    cae                     BIGINT,
+    auth_code_type          VARCHAR(1),       -- "E"=CAE, "A"=CAEA
 
     -- ── Campo del texto embebido o del OCR ──
     issuer_business_name    VARCHAR(255),
