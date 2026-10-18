@@ -42,6 +42,17 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
+    <!-- Sin esto, /actuator/prometheus simplemente no existe: Actuator
+         solo publica el endpoint si encuentra un registry en el classpath.
+         Las metricas propias del dominio llegan en la Fase 3, pero el
+         endpoint tiene que funcionar desde ahora porque application.yml
+         ya lo declara expuesto. Config que promete algo que no esta es
+         peor que no prometerlo. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+      <scope>runtime</scope>
+    </dependency>
 
     <dependency>
       <groupId>org.postgresql</groupId>
