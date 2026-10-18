@@ -1,54 +1,53 @@
 package ar.facturas.domain.enums;
 
 /**
- * De qué fuente salió el valor de un campo.
+ * Which source produced a field's value.
  *
- * <p>Se guarda por campo en {@code field_sources} y es lo que permite dos
- * cosas: que el formulario de revisión marque visualmente qué dato es
- * confiable y cuál hay que mirar, y que la métrica
- * {@code invoice.extraction.source} diga qué proporción de cada campo
- * viene del QR y cuál del OCR —o sea, dónde conviene invertir esfuerzo.
+ * <p>Stored per field in {@code field_sources}, it enables two things:
+ * the review form can mark visually which data is trustworthy and which
+ * needs a second look, and the {@code invoice.extraction.source} metric
+ * can report what share of each field comes from the QR versus OCR — in
+ * other words, where effort is worth spending.
  *
- * <p>El orden de la constante es el orden de prioridad: cuando dos
- * estrategias producen el mismo campo, gana la de mayor
- * {@link #prioridad()}.
+ * <p>Constant order is priority order: when two strategies produce the
+ * same field, the one with the higher {@link #priority()} wins.
  */
 public enum FieldSource {
 
-    /** Lo escribió el usuario al revisar. Gana sobre cualquier extracción. */
+    /** Typed by the user during review. Beats any extraction. */
     USER(1000, 1.0),
 
-    /** QR de ARCA. Dato oficial, exacto: no hay nada más confiable. */
+    /** ARCA's QR. Official, exact data: nothing is more reliable. */
     QR(100, 1.0),
 
-    /** Texto embebido del PDF. Sin pérdida de OCR, pero parseado con reglas. */
+    /** Embedded PDF text. No OCR loss, but still parsed with rules. */
     PDF_TEXT(50, 0.9),
 
-    /** OCR. Último recurso, y el único que de verdad puede equivocarse. */
+    /** OCR. Last resort, and the only source that can genuinely misread. */
     OCR(10, 0.5);
 
-    private final int prioridad;
-    private final double confianzaBase;
+    private final int priority;
+    private final double baseConfidence;
 
-    FieldSource(int prioridad, double confianzaBase) {
-        this.prioridad = prioridad;
-        this.confianzaBase = confianzaBase;
+    FieldSource(int priority, double baseConfidence) {
+        this.priority = priority;
+        this.baseConfidence = baseConfidence;
     }
 
-    public int prioridad() {
-        return prioridad;
+    public int priority() {
+        return priority;
     }
 
     /**
-     * Punto de partida de la confianza del campo. El OCR después la ajusta
-     * con lo que reporta el motor; el QR no necesita ajuste, o se leyó o
-     * no se leyó.
+     * Starting point for the field's confidence. OCR adjusts it afterwards
+     * with what the engine reports; the QR needs no adjustment — it either
+     * decoded or it did not.
      */
-    public double confianzaBase() {
-        return confianzaBase;
+    public double baseConfidence() {
+        return baseConfidence;
     }
 
-    public boolean ganaA(FieldSource otra) {
-        return otra == null || this.prioridad > otra.prioridad;
+    public boolean beats(FieldSource other) {
+        return other == null || this.priority > other.priority;
     }
 }

@@ -11,77 +11,77 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class JobStatusTest {
 
     @Test
-    void solo_PENDING_es_procesable() {
-        assertThat(PENDING.esProcesable()).isTrue();
+    void onlyPendingIsProcessable() {
+        assertThat(PENDING.isProcessable()).isTrue();
     }
 
     /**
-     * Es una lista blanca a propósito. Si alguien agrega un estado nuevo y
-     * no decide explícitamente que sea procesable, este test lo mantiene
-     * afuera en vez de dejar que el worker empiece a tomarlo en silencio.
+     * An allowlist on purpose. If someone adds a new state and does not
+     * explicitly decide it is processable, this test keeps it out instead
+     * of letting the worker silently start claiming it.
      */
     @ParameterizedTest
     @EnumSource(value = JobStatus.class, names = "PENDING", mode = EnumSource.Mode.EXCLUDE)
-    void ningun_otro_estado_es_procesable(JobStatus estado) {
-        assertThat(estado.esProcesable()).isFalse();
+    void noOtherStateIsProcessable(JobStatus status) {
+        assertThat(status.isProcessable()).isFalse();
     }
 
     @Test
-    void el_camino_feliz() {
-        assertThat(PENDING.puedeTransicionarA(PROCESSING)).isTrue();
-        assertThat(PROCESSING.puedeTransicionarA(EXTRACTED)).isTrue();
-        assertThat(EXTRACTED.puedeTransicionarA(CONFIRMED)).isTrue();
+    void theHappyPath() {
+        assertThat(PENDING.canTransitionTo(PROCESSING)).isTrue();
+        assertThat(PROCESSING.canTransitionTo(EXTRACTED)).isTrue();
+        assertThat(EXTRACTED.canTransitionTo(CONFIRMED)).isTrue();
     }
 
     @Test
-    void todo_reproceso_pasa_por_PENDING() {
-        assertThat(FAILED.puedeTransicionarA(PENDING)).isTrue();        // reintento del DLQ
-        assertThat(DEAD_LETTER.puedeTransicionarA(PENDING)).isTrue();   // reintento manual
-        assertThat(PROCESSING.puedeTransicionarA(PENDING)).isTrue();    // reaper de colgados
+    void everyReprocessPathGoesThroughPending() {
+        assertThat(FAILED.canTransitionTo(PENDING)).isTrue();        // DLQ retry
+        assertThat(DEAD_LETTER.canTransitionTo(PENDING)).isTrue();   // manual retry
+        assertThat(PROCESSING.canTransitionTo(PENDING)).isTrue();    // reaper for stuck jobs
     }
 
     @Test
-    void un_FAILED_no_se_procesa_directo() {
-        // Si se pudiera, una copia vieja del mensaje original sería
-        // indistinguible del reintento deliberado y se procesarían las dos.
-        assertThat(FAILED.esProcesable()).isFalse();
-        assertThat(FAILED.puedeTransicionarA(PROCESSING)).isFalse();
+    void aFailedJobIsNeverProcessedDirectly() {
+        // If it were, a stale copy of the original message would be
+        // indistinguishable from the deliberate retry and both would run.
+        assertThat(FAILED.isProcessable()).isFalse();
+        assertThat(FAILED.canTransitionTo(PROCESSING)).isFalse();
     }
 
     @Test
-    void un_duplicado_se_detecta_procesando_y_no_va_a_ningun_lado() {
-        assertThat(PROCESSING.puedeTransicionarA(DUPLICATE)).isTrue();
-        assertThat(DUPLICATE.esTerminal()).isTrue();
+    void aDuplicateIsDetectedWhileProcessingAndGoesNowhereAfter() {
+        assertThat(PROCESSING.canTransitionTo(DUPLICATE)).isTrue();
+        assertThat(DUPLICATE.isTerminal()).isTrue();
     }
 
     @ParameterizedTest
     @EnumSource(value = JobStatus.class, names = {"CONFIRMED", "DUPLICATE"})
-    void los_estados_terminales_no_tienen_salida(JobStatus terminal) {
-        assertThat(terminal.esTerminal()).isTrue();
-        for (JobStatus destino : values()) {
-            assertThat(terminal.puedeTransicionarA(destino))
-                    .as("%s no debería poder ir a %s", terminal, destino)
+    void terminalStatesHaveNoWayOut(JobStatus terminal) {
+        assertThat(terminal.isTerminal()).isTrue();
+        for (JobStatus target : values()) {
+            assertThat(terminal.canTransitionTo(target))
+                    .as("%s should not be able to reach %s", terminal, target)
                     .isFalse();
         }
     }
 
     @Test
-    void un_estado_no_transiciona_a_si_mismo() {
-        for (JobStatus estado : values()) {
-            assertThat(estado.puedeTransicionarA(estado)).isFalse();
+    void noStateTransitionsToItself() {
+        for (JobStatus status : values()) {
+            assertThat(status.canTransitionTo(status)).isFalse();
         }
     }
 
     @Test
-    void exigir_una_transicion_invalida_dice_cuales_son_los_dos_estados() {
-        assertThatThrownBy(() -> CONFIRMED.exigirTransicionA(PROCESSING))
+    void requiringAnInvalidTransitionNamesBothStates() {
+        assertThatThrownBy(() -> CONFIRMED.requireTransitionTo(PROCESSING))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("CONFIRMED")
                 .hasMessageContaining("PROCESSING");
     }
 
     @Test
-    void exigir_una_transicion_valida_devuelve_el_destino() {
-        assertThat(PENDING.exigirTransicionA(PROCESSING)).isEqualTo(PROCESSING);
+    void requiringAValidTransitionReturnsTheTarget() {
+        assertThat(PENDING.requireTransitionTo(PROCESSING)).isEqualTo(PROCESSING);
     }
 }

@@ -3,94 +3,102 @@ package ar.facturas.domain.vo;
 import java.util.Optional;
 
 /**
- * CUIT del emisor o del receptor de un comprobante.
+ * The CUIT of the issuer or recipient of a comprobante.
  *
- * <p>Un CUIT no es "once números cualesquiera": el último dígito es
- * verificador, calculado módulo 11 sobre los diez anteriores. Eso es lo
- * que permite descartar una lectura mala del OCR antes de mostrársela al
- * usuario como si fuera un dato.
+ * <p>A CUIT is not "any eleven digits": the last one is a check digit,
+ * computed modulo 11 over the preceding ten. That is what lets us discard
+ * a bad OCR reading before showing it to the user as if it were data.
  *
- * <p>Este tipo no se puede instanciar inválido. Si existe un {@code Cuit},
- * su dígito verificador cierra.
+ * <p>This type cannot be instantiated in an invalid state. If a
+ * {@code Cuit} exists, its check digit holds.
  */
-public record Cuit(long valor) {
+public record Cuit(long value) {
 
-    private static final int[] PESOS = {5, 4, 3, 2, 7, 6, 5, 4, 3, 2};
-    private static final long MIN = 10_000_000_000L;   // 11 dígitos
+    private static final int[] WEIGHTS = {5, 4, 3, 2, 7, 6, 5, 4, 3, 2};
+    private static final long MIN = 10_000_000_000L;   // 11 digits
     private static final long MAX = 99_999_999_999L;
 
     public Cuit {
-        if (!esValido(valor)) {
+        if (!isValid(value)) {
             throw new IllegalArgumentException(
-                    "CUIT inválido: " + valor + " (el dígito verificador no cierra)");
+                    "Invalid CUIT: " + value + " (check digit does not hold)");
         }
-    }
-
-    /** Acepta {@code "30-71234567-8"}, {@code "30712345678"} y variantes con espacios. */
-    public static Cuit de(String texto) {
-        return parsear(texto).orElseThrow(() -> new IllegalArgumentException(
-                "CUIT inválido: \"" + texto + "\""));
     }
 
     /**
-     * Versión no excepcional, para cuando el origen del dato es poco
-     * confiable: texto de un PDF, salida de OCR, input del usuario.
+     * Accepts {@code "30-71234567-8"}, {@code "30712345678"} and variants
+     * with spaces or surrounding text.
+     *
+     * @throws IllegalArgumentException if the text does not hold a valid
+     *         CUIT. Use {@link #parse(String)} when an invalid value is a
+     *         normal outcome rather than a bug.
      */
-    public static Optional<Cuit> parsear(String texto) {
-        if (texto == null) {
-            return Optional.empty();
-        }
-        String digitos = texto.replaceAll("[^0-9]", "");
-        if (digitos.length() != 11) {
-            return Optional.empty();
-        }
-        long valor = Long.parseLong(digitos);
-        return esValido(valor) ? Optional.of(new Cuit(valor)) : Optional.empty();
+    public static Cuit of(String text) {
+        return parse(text).orElseThrow(() -> new IllegalArgumentException(
+                "Invalid CUIT: \"" + text + "\""));
     }
 
-    public static boolean esValido(long valor) {
-        if (valor < MIN || valor > MAX) {
+    /**
+     * Non-throwing variant, for sources we cannot trust: PDF text, OCR
+     * output, user input. A bad value there is expected behaviour, not a
+     * programming error, so it should not cost a try/catch on the happy
+     * path.
+     */
+    public static Optional<Cuit> parse(String text) {
+        if (text == null) {
+            return Optional.empty();
+        }
+        String digits = text.replaceAll("[^0-9]", "");
+        if (digits.length() != 11) {
+            return Optional.empty();
+        }
+        long value = Long.parseLong(digits);
+        return isValid(value) ? Optional.of(new Cuit(value)) : Optional.empty();
+    }
+
+    public static boolean isValid(long value) {
+        if (value < MIN || value > MAX) {
             return false;
         }
-        int[] d = digitos(valor);
-        return d[10] == digitoVerificador(d);
+        int[] d = digitsOf(value);
+        return d[10] == checkDigit(d);
     }
 
     /**
-     * Dígito verificador módulo 11, según el algoritmo de ARCA.
+     * Modulo 11 check digit, per the ARCA algorithm.
      *
-     * <p>Los dos casos de borde tienen convención propia: cuando el resto
-     * da 0 el verificador es 0, y cuando daría 10 se usa 9.
+     * <p>The two edge cases have their own convention: a remainder of 0
+     * yields a check digit of 0, and a result of 10 is replaced by 9.
      */
-    private static int digitoVerificador(int[] d) {
-        int suma = 0;
-        for (int i = 0; i < PESOS.length; i++) {
-            suma += d[i] * PESOS[i];
+    private static int checkDigit(int[] d) {
+        int sum = 0;
+        for (int i = 0; i < WEIGHTS.length; i++) {
+            sum += d[i] * WEIGHTS[i];
         }
-        int dv = 11 - (suma % 11);
+        int dv = 11 - (sum % 11);
         if (dv == 11) {
             return 0;
         }
         return dv == 10 ? 9 : dv;
     }
 
-    private static int[] digitos(long valor) {
+    private static int[] digitsOf(long value) {
         int[] d = new int[11];
         for (int i = 10; i >= 0; i--) {
-            d[i] = (int) (valor % 10);
-            valor /= 10;
+            d[i] = (int) (value % 10);
+            value /= 10;
         }
         return d;
     }
 
-    /** {@code 30712345678} → {@code "30-71234567-8"} */
-    public String formateado() {
-        String s = String.valueOf(valor);
+    /** {@code 30712345678} to {@code "30-71234567-8"}, as printed on the comprobante. */
+    public String formatted() {
+        String s = String.valueOf(value);
         return s.substring(0, 2) + "-" + s.substring(2, 10) + "-" + s.substring(10);
     }
 
     @Override
     public String toString() {
-        return formateado();
+        return formatted();
     }
 }

@@ -6,12 +6,13 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class TipoComprobanteTest {
 
-    @ParameterizedTest(name = "código {0} = {1}")
+    @ParameterizedTest(name = "code {0} is {1}")
     @CsvSource({
             "1,   FACTURA_A",
             "6,   FACTURA_B",
@@ -21,19 +22,19 @@ class TipoComprobanteTest {
             "111, TIQUE_FACTURA_C",
             "201, FCE_A"
     })
-    void mapea_los_codigos_oficiales(int codigo, TipoComprobante esperado) {
-        assertThat(TipoComprobante.porCodigo(codigo)).contains(esperado);
+    void mapsTheOfficialCodes(int code, TipoComprobante expected) {
+        assertThat(TipoComprobante.byCode(code)).contains(expected);
     }
 
     /**
-     * La tabla de ARCA tiene unas ochenta entradas y cambia. Un código que
-     * no conocemos no puede romper una extracción: el número crudo se
-     * guarda igual en {@code invoice_type_code}.
+     * ARCA's table has around eighty entries and changes over time. A code
+     * we do not know must not break an extraction: the raw number is
+     * stored in {@code invoice_type_code} either way.
      */
     @Test
-    void un_codigo_desconocido_no_explota() {
-        assertThat(TipoComprobante.porCodigo(9999)).isEmpty();
-        assertThat(TipoComprobante.porCodigo(0)).isEmpty();
+    void anUnknownCodeDoesNotBlowUp() {
+        assertThat(TipoComprobante.byCode(9999)).isEmpty();
+        assertThat(TipoComprobante.byCode(0)).isEmpty();
     }
 
     @ParameterizedTest
@@ -41,44 +42,50 @@ class TipoComprobanteTest {
             names = {"NOTA_CREDITO_A", "NOTA_CREDITO_B", "NOTA_CREDITO_C",
                      "NOTA_CREDITO_M", "NOTA_CREDITO_FCE_A", "NOTA_CREDITO_FCE_B",
                      "NOTA_CREDITO_FCE_C"})
-    void las_notas_de_credito_restan(TipoComprobante nc) {
-        assertThat(nc.esNotaDeCredito()).isTrue();
-        assertThat(nc.signo()).isEqualTo(Signo.RESTA);
+    void creditNotesSubtract(TipoComprobante creditNote) {
+        assertThat(creditNote.isCreditNote()).isTrue();
+        assertThat(creditNote.sign()).isEqualTo(Sign.SUBTRACT);
     }
 
     @ParameterizedTest
     @EnumSource(value = TipoComprobante.class,
             names = {"FACTURA_A", "FACTURA_B", "FACTURA_C",
                      "NOTA_DEBITO_A", "NOTA_DEBITO_B", "NOTA_DEBITO_C"})
-    void las_facturas_y_las_notas_de_debito_suman(TipoComprobante tipo) {
-        assertThat(tipo.esNotaDeCredito()).isFalse();
-        assertThat(tipo.signo()).isEqualTo(Signo.SUMA);
+    void invoicesAndDebitNotesAdd(TipoComprobante type) {
+        assertThat(type.isCreditNote()).isFalse();
+        assertThat(type.sign()).isEqualTo(Sign.ADD);
     }
 
     /**
-     * El caso que arruina el total de un período si el export suma todo
-     * sin mirar el tipo.
+     * The case that ruins a period total when the export sums everything
+     * without looking at the comprobante type.
      */
     @Test
-    void aplicar_el_signo_es_lo_que_hace_cerrar_el_total() {
-        BigDecimal monto = new BigDecimal("12100.50");
+    void applyingTheSignIsWhatMakesAPeriodTotalAddUp() {
+        BigDecimal amount = new BigDecimal("12100.50");
 
-        assertThat(TipoComprobante.FACTURA_B.signo().aplicar(monto))
+        assertThat(TipoComprobante.FACTURA_B.sign().applyTo(amount))
                 .isEqualByComparingTo("12100.50");
-        assertThat(TipoComprobante.NOTA_CREDITO_B.signo().aplicar(monto))
+        assertThat(TipoComprobante.NOTA_CREDITO_B.sign().applyTo(amount))
                 .isEqualByComparingTo("-12100.50");
 
-        BigDecimal total = TipoComprobante.FACTURA_B.signo().aplicar(monto)
-                .add(TipoComprobante.NOTA_CREDITO_B.signo().aplicar(monto));
+        BigDecimal total = TipoComprobante.FACTURA_B.sign().applyTo(amount)
+                .add(TipoComprobante.NOTA_CREDITO_B.sign().applyTo(amount));
         assertThat(total).isEqualByComparingTo("0.00");
     }
 
     @Test
-    void no_hay_dos_tipos_con_el_mismo_codigo() {
-        long distintos = java.util.Arrays.stream(TipoComprobante.values())
-                .map(TipoComprobante::codigo)
+    void noTwoTypesShareACode() {
+        long distinct = Arrays.stream(TipoComprobante.values())
+                .map(TipoComprobante::code)
                 .distinct()
                 .count();
-        assertThat(distintos).isEqualTo(TipoComprobante.values().length);
+        assertThat(distinct).isEqualTo(TipoComprobante.values().length);
+    }
+
+    /** The official ARCA wording stays in Spanish: it is the source table's own text. */
+    @Test
+    void descriptionsKeepTheOfficialWording() {
+        assertThat(TipoComprobante.NOTA_CREDITO_B.description()).isEqualTo("Nota de Crédito B");
     }
 }
