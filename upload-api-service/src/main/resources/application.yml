@@ -1,0 +1,53 @@
+spring:
+  application:
+    name: upload-api-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/facturas
+    username: facturas
+    password: facturas
+
+  jpa:
+    hibernate:
+      # Flyway es el dueño del esquema. Hibernate solo verifica que las
+      # entidades coincidan con lo que las migraciones crearon.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+
+server:
+  port: 8080
+
+# Configuración propia del proyecto
+facturas:
+  storage:
+    endpoint: http://localhost:9000
+    bucket: facturas
+    access-key: minioadmin
+    secret-key: minioadmin
+    region: us-east-1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    ar.facturas: DEBUG

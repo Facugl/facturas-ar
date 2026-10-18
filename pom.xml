@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.1</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>ar.facturas</groupId>
+  <artifactId>facturas-ar</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>facturas-ar</name>
+  <description>Extracción automática de datos de comprobantes fiscales argentinos (ARCA)</description>
+
+  <modules>
+    <module>shared-domain</module>
+    <module>shared-events</module>
+    <module>extraction</module>
+    <module>upload-api-service</module>
+    <!-- ocr-worker-service entra en la Fase 2, cuando exista la cola.
+         Un módulo vacío durante seis semanas es ruido, no preparación. -->
+  </modules>
+
+  <properties>
+    <java.version>21</java.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+    <!-- Terceros que Spring Boot no gestiona -->
+    <zxing.version>3.5.3</zxing.version>
+    <pdfbox.version>3.0.7</pdfbox.version>
+    <tess4j.version>5.16.0</tess4j.version>
+    <opencv.version>4.9.0-0</opencv.version>
+    <awssdk.version>2.46.7</awssdk.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- Módulos internos -->
+      <dependency>
+        <groupId>ar.facturas</groupId>
+        <artifactId>shared-domain</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>ar.facturas</groupId>
+        <artifactId>shared-events</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>ar.facturas</groupId>
+        <artifactId>extraction</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <!-- Lectura del QR de ARCA -->
+      <dependency>
+        <groupId>com.google.zxing</groupId>
+        <artifactId>core</artifactId>
+        <version>${zxing.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.google.zxing</groupId>
+        <artifactId>javase</artifactId>
+        <version>${zxing.version}</version>
+      </dependency>
+
+      <!-- Texto embebido y rasterizado de PDF -->
+      <dependency>
+        <groupId>org.apache.pdfbox</groupId>
+        <artifactId>pdfbox</artifactId>
+        <version>${pdfbox.version}</version>
+      </dependency>
+
+      <!-- OCR de último recurso -->
+      <dependency>
+        <groupId>net.sourceforge.tess4j</groupId>
+        <artifactId>tess4j</artifactId>
+        <version>${tess4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.openpnp</groupId>
+        <artifactId>opencv</artifactId>
+        <version>${opencv.version}</version>
+      </dependency>
+
+      <!-- Cliente S3 para MinIO -->
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${awssdk.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+</project>
