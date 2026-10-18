@@ -194,7 +194,7 @@ Gestión de cuenta
 
 Ingesta
   CU-03  Subir un comprobante                      ← núcleo
-  CU-04  Detectar comprobante duplicado
+  CU-04  Detectar duplicado (por archivo al subir, por comprobante al extraer)
   CU-05  Seguir el estado del procesamiento
 
 Extracción  (sistema)
@@ -291,7 +291,10 @@ Este es el corazón del proyecto. El flujo en cascada:
        ¿el dígito verificador del CUIT cierra?     → refuerza
        Discrepancia → el QR gana, se registra la discrepancia
 
-8. Persistir ExtractedInvoiceData + Job → EXTRACTED  (1 transacción)
+8. ¿Este usuario ya tiene (cuit, tipo, ptoVta, nro)?
+     sí → Job → DUPLICATE + duplicate_of_job_id, sin fila de datos
+     no → persistir ExtractedInvoiceData + Job → EXTRACTED (1 transacción)
+          si salta uq_eid_usuario_comprobante (carrera): → DUPLICATE
 9. Invalidar la entrada de cache del Job
 10. Ack
 ```
@@ -366,6 +369,8 @@ Este es el corazón del proyecto. El flujo en cascada:
 | RN-08 | Toda corrección del usuario se registra | `FieldCorrection` |
 | RN-09 | Un `Job` solo se procesa desde `PENDING`, y se toma con un `UPDATE` condicional | Listener del worker |
 | RN-10 | Todo camino de reproceso devuelve el `Job` a `PENDING` antes de republicar | DLQ, reaper, reintento manual |
+| RN-11 | Un comprobante ya cargado por el mismo usuario no se carga dos veces. La identidad es `(cuit, tipo, pto_vta, nro)`, no el hash del archivo | Índice único parcial + chequeo en la app |
+| RN-12 | Un duplicado no pierde el archivo: el `Job` queda en `DUPLICATE` apuntando al original | `duplicate_of_job_id` |
 
 > **RN-07 merece un test propio.** El bug más común y más grave de un sistema multiusuario es el `GET /jobs/{id}` que no filtra por dueño. Escribí el test que intenta leer el job de otro usuario y espera un 404.
 

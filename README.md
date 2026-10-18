@@ -189,6 +189,7 @@ max_retries             -- e.g. 3
 error_message           -- nullable, only if FAILED/DEAD_LETTER
 ocr_engine              -- "tesseract-5.3", to compare engines in the future
 overall_confidence      -- 0-1, aggregated score
+duplicate_of_job_id     -- nullable, FK a jobs; obligatorio si status=DUPLICATE
 created_at
 started_at              -- nullable
 completed_at            -- nullable
@@ -202,6 +203,7 @@ completed_at            -- nullable
 | `PROCESSING` | no | Un worker lo tiene tomado. Si llega otro mensaje para este job, es un duplicado |
 | `EXTRACTED` | no | La extracción terminó, listo para revisión del usuario (no hay estado separado de "baja confianza": el formulario siempre es editable) |
 | `CONFIRMED` | no | Usuario revisó/corrigió y aprobó — entra al historial exportable |
+| `DUPLICATE` | no | El comprobante ya estaba cargado por este usuario. `duplicate_of_job_id` apunta al original. El archivo se conserva; lo que no se duplica es el dato extraído |
 | `FAILED` | no | El último intento falló por un error recuperable (timeout, error transitorio). Estado de reposo: **espera a que el reintentador lo devuelva a `PENDING`**, no se procesa desde acá |
 | `DEAD_LETTER` | no | Agotó reintentos o archivo irrecuperable — requiere acción manual del usuario |
 
@@ -209,6 +211,8 @@ completed_at            -- nullable
 
 ```
 PENDING ──claim──> PROCESSING ──> EXTRACTED ──> CONFIRMED
+                        │
+                        ├── ya cargado por este usuario ──> DUPLICATE
                         │
                         ├── error recuperable ──> FAILED ──┐
                         │                                   │
@@ -225,6 +229,7 @@ PENDING ──claim──> PROCESSING ──> EXTRACTED ──> CONFIRMED
 ### `ExtractedInvoiceData` (1:1 con Job)
 ```
 job_id (FK, PK)
+user_id                     -- denormalizado desde documents.user_id (ver abajo)
 
 -- Campos que vienen del QR (exactos cuando hay QR legible)
 issuer_cuit                 -- numeric(11), con dígito verificador validado
@@ -262,10 +267,26 @@ field_confidence            -- jsonb, {"issuer_cuit": 1.0, "net_amount": 0.60, .
 **Índices obligatorios:**
 
 ```sql
-UNIQUE (user_id, content_hash)                                      -- deduplicación de archivo
-UNIQUE (issuer_cuit, invoice_type_code, point_of_sale, invoice_number)  -- identidad del comprobante
-INDEX  (user_id, status, issue_date)                                -- historial y export
+-- En documents: misma ARCHIVO, mismo usuario. Atrapa el doble clic.
+UNIQUE (user_id, content_hash)
+
+-- En extracted_invoice_data: mismo COMPROBANTE, mismo usuario.
+-- Parcial, para que las extracciones fallidas (todo NULL) no choquen entre sí.
+UNIQUE (user_id, issuer_cuit, invoice_type_code, point_of_sale, invoice_number)
+   WHERE issuer_cuit IS NOT NULL AND invoice_type_code IS NOT NULL
+     AND point_of_sale IS NOT NULL AND invoice_number IS NOT NULL
+
+INDEX (user_id, issue_date)        -- historial y export, sin joins
+INDEX (status) WHERE status IN ('PENDING','PROCESSING')   -- claim atómico
 ```
+
+**Por qué `user_id` está denormalizado en `extracted_invoice_data`:** por dos motivos independientes. Es la única forma de expresar *"este comprobante ya lo cargó este usuario"* como restricción de base, y el export filtra por usuario y fecha — sin la columna hay que joinear `jobs` y `documents` solo para saber de quién es la fila. Es además la clase segura de denormalización: el dueño de un documento no cambia nunca.
+
+**Por qué el hash del archivo no alcanza:** atrapa el doble clic, no la duplicación real. Se escapan dos casos frecuentes — tener el PDF del mail *y* la foto del impreso (dos archivos, mismo comprobante), y volver a descargar la factura del portal del proveedor cuando el PDF regenerado difiere en un byte de metadata. La identidad fiscal `(CUIT, tipo, punto de venta, número)` sí los atrapa, y **el QR nos la da exacta**: tenemos una clave de deduplicación confiable justamente por haber puesto el QR primero.
+
+**Por qué por usuario y no global:** dos personas pueden cargar el mismo comprobante legítimamente — una pareja con la factura de luz, dos socios con la del proveedor.
+
+> La detección va en la aplicación: consulta antes de insertar y marca el `Job` como `DUPLICATE` con un mensaje útil (*"ya cargaste este comprobante el 3 de marzo"*), no con un error de constraint. El índice único es la red de seguridad contra la carrera de dos subidas simultáneas — ahí se captura la violación y se convierte en `DUPLICATE` igual.
 
 ### `OutboxEvent`
 ```

@@ -37,9 +37,12 @@ CREATE TABLE documents (
     CONSTRAINT ck_documents_source_type
         CHECK (source_type IN ('PDF_TEXT', 'PDF_SCANNED', 'IMAGE')),
 
-    -- Deduplicación: el mismo archivo subido dos veces por el mismo
-    -- usuario no se reprocesa. Es por usuario, no global: dos personas
-    -- distintas pueden subir legítimamente el mismo comprobante.
+    -- Primera barrera de deduplicación: el mismo ARCHIVO, byte por byte,
+    -- subido dos veces por el mismo usuario. Atrapa el doble clic, no la
+    -- duplicación real — para eso está uq_eid_usuario_comprobante.
+    --
+    -- Es por usuario, no global: dos personas distintas pueden subir
+    -- legítimamente el mismo comprobante.
     CONSTRAINT uq_documents_user_content_hash UNIQUE (user_id, content_hash)
 );
 
@@ -47,17 +50,21 @@ CREATE INDEX ix_documents_user_uploaded ON documents (user_id, uploaded_at DESC)
 
 
 CREATE TABLE jobs (
-    id                 UUID        PRIMARY KEY,
-    document_id        UUID        NOT NULL REFERENCES documents (id),
-    status             VARCHAR(20) NOT NULL,
-    retry_count        INT         NOT NULL DEFAULT 0,
-    max_retries        INT         NOT NULL DEFAULT 3,
-    error_message      TEXT,
-    ocr_engine         VARCHAR(50),
-    overall_confidence NUMERIC(4, 3),
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    started_at         TIMESTAMPTZ,
-    completed_at       TIMESTAMPTZ,
+    id                  UUID        PRIMARY KEY,
+    document_id         UUID        NOT NULL REFERENCES documents (id),
+    status              VARCHAR(20) NOT NULL,
+    retry_count         INT         NOT NULL DEFAULT 0,
+    max_retries         INT         NOT NULL DEFAULT 3,
+    error_message       TEXT,
+    ocr_engine          VARCHAR(50),
+    overall_confidence  NUMERIC(4, 3),
+    -- Si este job resultó ser un comprobante ya cargado, apunta al job
+    -- original para que la UI pueda decir "ya lo subiste el 3 de marzo"
+    -- en vez de un error sin contexto.
+    duplicate_of_job_id UUID        REFERENCES jobs (id) ON DELETE SET NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at          TIMESTAMPTZ,
+    completed_at        TIMESTAMPTZ,
 
     -- La máquina de estados, al nivel más bajo posible. Si una transición
     -- inválida se escapa del código, acá se frena.
@@ -66,10 +73,17 @@ CREATE TABLE jobs (
         'PROCESSING',
         'EXTRACTED',
         'CONFIRMED',
+        'DUPLICATE',    -- el comprobante ya estaba cargado por este usuario
         'FAILED',       -- reposo: espera que el reintentador lo vuelva a PENDING
         'DEAD_LETTER'
     )),
-    CONSTRAINT ck_jobs_retry_count CHECK (retry_count >= 0)
+    CONSTRAINT ck_jobs_retry_count CHECK (retry_count >= 0),
+
+    -- DUPLICATE sin puntero al original sería una pista a medias
+    CONSTRAINT ck_jobs_duplicate_coherente CHECK (
+        (status = 'DUPLICATE' AND duplicate_of_job_id IS NOT NULL)
+        OR (status <> 'DUPLICATE' AND duplicate_of_job_id IS NULL)
+    )
 );
 
 CREATE INDEX ix_jobs_document ON jobs (document_id);
@@ -81,6 +95,15 @@ CREATE INDEX ix_jobs_status ON jobs (status) WHERE status IN ('PENDING', 'PROCES
 
 CREATE TABLE extracted_invoice_data (
     job_id                  UUID PRIMARY KEY REFERENCES jobs (id),
+
+    -- Denormalizado desde documents.user_id. Dos motivos independientes:
+    --   1. Es la única forma de expresar "este comprobante ya lo cargó
+    --      este usuario" como restricción de base.
+    --   2. El export filtra por usuario y rango de fechas; sin esto hay
+    --      que joinear jobs y documents solo para saber de quién es.
+    -- Es la clase segura de denormalización: el dueño de un documento
+    -- no cambia nunca.
+    user_id                 UUID NOT NULL REFERENCES users (id),
 
     -- ── Campos del QR de ARCA (RG 4892) ──
     -- Exactos cuando hay QR legible. Nullable porque un comprobante sin
@@ -116,13 +139,35 @@ CREATE TABLE extracted_invoice_data (
         CHECK (auth_code_type IS NULL OR auth_code_type IN ('E', 'A'))
 );
 
--- Identidad del comprobante: (CUIT emisor, tipo, punto de venta, número).
--- A propósito NO es UNIQUE — ver nota al pie de este archivo.
-CREATE INDEX ix_eid_identidad
-    ON extracted_invoice_data (issuer_cuit, invoice_type_code, point_of_sale, invoice_number);
+-- ── Deduplicación por identidad fiscal del comprobante ──
+--
+-- (CUIT emisor, tipo, punto de venta, número) es lo que identifica al
+-- comprobante ante ARCA, y el QR nos lo da exacto. Es una clave de
+-- deduplicación mucho más fuerte que el hash del archivo: atrapa el caso
+-- de tener el PDF del mail Y la foto del impreso, o el de un PDF
+-- regenerado por el portal del proveedor que difiere en un byte de
+-- metadata.
+--
+-- Por usuario, no global: dos personas pueden cargar el mismo
+-- comprobante legítimamente (una pareja con la factura de luz).
+--
+-- El WHERE deja afuera las extracciones fallidas, que tienen todo en
+-- NULL y no deben chocar entre sí.
+--
+-- La detección real va en la aplicación (consulta antes de insertar, y
+-- marca el Job como DUPLICATE con un mensaje útil). Este índice es la
+-- red de seguridad contra la carrera de dos subidas simultáneas: ahí la
+-- violación se captura y se convierte en DUPLICATE igual.
+CREATE UNIQUE INDEX uq_eid_usuario_comprobante
+    ON extracted_invoice_data (user_id, issuer_cuit, invoice_type_code,
+                               point_of_sale, invoice_number)
+ WHERE issuer_cuit       IS NOT NULL
+   AND invoice_type_code IS NOT NULL
+   AND point_of_sale     IS NOT NULL
+   AND invoice_number    IS NOT NULL;
 
--- El export filtra por rango de fecha de emisión
-CREATE INDEX ix_eid_issue_date ON extracted_invoice_data (issue_date);
+-- El export filtra por usuario y rango de fecha de emisión
+CREATE INDEX ix_eid_user_issue_date ON extracted_invoice_data (user_id, issue_date);
 
 
 CREATE TABLE field_corrections (
@@ -139,18 +184,11 @@ CREATE INDEX ix_field_corrections_field ON field_corrections (field_name);
 
 
 -- ────────────────────────────────────────────────────────────────
---  Nota sobre la identidad del comprobante
+--  Nota: un Job en DUPLICATE no tiene fila en extracted_invoice_data.
 --
---  El diseño original marcaba (issuer_cuit, invoice_type_code,
---  point_of_sale, invoice_number) como UNIQUE global. Quedó como índice
---  común a propósito: ese UNIQUE rechazaría que dos usuarios distintos
---  carguen el mismo comprobante, y eso pasa de verdad (una pareja con la
---  factura de luz, dos socios con la misma factura del proveedor).
---
---  La deduplicación que v1 necesita ya está cubierta por
---  uq_documents_user_content_hash, que es por usuario.
---
---  Si más adelante se quiere deduplicar a nivel comprobante por usuario,
---  hace falta denormalizar user_id en esta tabla. Es una decisión abierta,
---  no un olvido.
+--  Los datos ya están en el job original, al que apunta
+--  duplicate_of_job_id. Insertarlos de nuevo chocaría contra
+--  uq_eid_usuario_comprobante, que es justamente lo que define al
+--  duplicado. El archivo subido se conserva igual (RN-06): lo que no
+--  se duplica es el dato extraído, no el documento.
 -- ────────────────────────────────────────────────────────────────
