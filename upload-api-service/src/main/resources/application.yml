@@ -3,7 +3,7 @@ spring:
     name: upload-api-service
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/facturas
+    url: jdbc:postgresql://localhost:5433/facturas   # 5433: ver nota en docker-compose.yml
     username: facturas
     password: facturas
 
@@ -33,11 +33,15 @@ server:
 # Configuración propia del proyecto
 facturas:
   storage:
-    endpoint: http://localhost:9000
+    # S3Mock en dev. En producción, el endpoint de S3 real o el que
+    # corresponda: el código va por el SDK de S3 y no sabe la diferencia.
+    endpoint: http://localhost:9090
     bucket: facturas
-    access-key: minioadmin
-    secret-key: minioadmin
+    access-key: test
+    secret-key: test
     region: us-east-1
+    # LocalStack y MinIO necesitan path-style; S3 real usa virtual-hosted.
+    path-style-access: true
 
 management:
   endpoints:

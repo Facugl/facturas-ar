@@ -13,7 +13,11 @@ services:
       POSTGRES_USER: facturas
       POSTGRES_PASSWORD: facturas
     ports:
-      - "5432:5432"
+      # 5433 en el host a propósito: el 5432 suele estar ocupado por una
+      # instalación nativa de PostgreSQL. Si los dos escuchan, el nativo
+      # gana y la app se conecta a la base equivocada, con un error de
+      # autenticación que no dice nada de todo esto.
+      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -22,42 +26,33 @@ services:
       timeout: 5s
       retries: 10
 
-  minio:
-    # TODO: pinear a un RELEASE concreto una vez que el stack funcione.
-    # `latest` es cómodo ahora y deja de serlo el día que cambie algo.
-    image: minio/minio:latest
-    container_name: facturas-minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+  # Almacenamiento de objetos S3-compatible.
+  #
+  # Es la tercera opción: las dos anteriores cayeron por licenciamiento.
+  #   - MinIO: sus imágenes dejaron de ser públicas (Docker Hub y quay.io
+  #     piden login).
+  #   - LocalStack: la imagen `stable` exige LOCALSTACK_AUTH_TOKEN y sale
+  #     con exit 55 sin él.
+  # S3Mock es Apache 2.0 y arranca sin credenciales ni registro.
+  #
+  # El código va por el SDK de S3 igual, así que el día que esto apunte a
+  # S3 real o a cualquier otro backend solo cambia el endpoint. Esa es
+  # toda la razón por la que el almacenamiento está detrás de un puerto.
+  s3:
+    image: adobe/s3mock:latest
+    container_name: facturas-s3
     ports:
-      - "9000:9000"   # API S3
-      - "9001:9001"   # consola web
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # MinIO arranca sin buckets. Sin esto, la primera subida falla con
-  # NoSuchBucket y perdés media hora averiguando por qué.
-  minio-init:
-    image: minio/mc:latest
-    container_name: facturas-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/facturas &&
-      mc anonymous set none local/facturas &&
-      echo 'bucket facturas listo'
-      "
+      - "9090:9090"
+    # Sin `initialBuckets`: esta versión de S3Mock ignora esa variable de
+    # entorno (llega al contenedor pero no la bindea). No vale la pena
+    # pelearla, porque la solución correcta es otra: **la aplicación se
+    # asegura de que el bucket exista al arrancar** (headBucket y, si da
+    # 404, createBucket). Eso hay que hacerlo igual contra S3 real,
+    # funciona con cualquier backend, y saca una dependencia de cómo se
+    # configura un contenedor puntual.
+    #
+    # Nota: los archivos quedan en un temp dir adentro del contenedor y se
+    # pierden al recrearlo. Para desarrollo alcanza.
 
 volumes:
   postgres-data:
-  minio-data:

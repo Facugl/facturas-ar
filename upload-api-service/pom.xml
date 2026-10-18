@@ -52,9 +52,13 @@
       <artifactId>postgresql</artifactId>
       <scope>runtime</scope>
     </dependency>
+    <!-- Spring Boot 4 separó las autoconfiguraciones en un módulo por
+         tecnología. Con flyway-core solo, Flyway queda en el classpath
+         pero nadie lo arranca: la app levanta y no migra nada, sin un
+         solo mensaje de error. El starter es el que trae el pegamento. -->
     <dependency>
-      <groupId>org.flywaydb</groupId>
-      <artifactId>flyway-core</artifactId>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-flyway</artifactId>
     </dependency>
     <dependency>
       <groupId>org.flywaydb</groupId>
