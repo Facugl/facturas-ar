@@ -1,0 +1,315 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "facturas-ar — Flujo de una factura",
+    "locale": "es",
+    "output": "docs/diagrams/flujo-factura.html",
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    {
+      "id": "usuario",
+      "type": "external",
+      "label": "Usuario",
+      "sublabel": "sube la factura"
+    },
+    {
+      "id": "frontend",
+      "type": "frontend",
+      "label": "Frontend",
+      "sublabel": "React + Vite"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API",
+      "sublabel": "upload-api-service"
+    },
+    {
+      "id": "minio",
+      "type": "cloud",
+      "label": "MinIO",
+      "sublabel": "archivos"
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "Job + datos + outbox"
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "cache de jobs"
+    },
+    {
+      "id": "rabbit",
+      "type": "messagebus",
+      "label": "RabbitMQ",
+      "sublabel": "cola de extracción"
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Worker",
+      "sublabel": "ocr-worker-service"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 386,
+      "label": "Ingesta"
+    },
+    {
+      "from": 392,
+      "to": 700,
+      "label": "Extracción en cascada"
+    },
+    {
+      "from": 706,
+      "to": 1000,
+      "label": "Revisión y confirmación"
+    }
+  ],
+  "messages": [
+    {
+      "id": "sube",
+      "from": "usuario",
+      "to": "frontend",
+      "y": 160,
+      "label": "sube foto o PDF",
+      "variant": "emphasis"
+    },
+    {
+      "id": "post-documents",
+      "from": "frontend",
+      "to": "api",
+      "y": 188,
+      "label": "POST /documents",
+      "variant": "emphasis"
+    },
+    {
+      "id": "guarda-archivo",
+      "from": "api",
+      "to": "minio",
+      "y": 216,
+      "label": "guarda el archivo"
+    },
+    {
+      "id": "crea-job",
+      "from": "api",
+      "to": "postgres",
+      "y": 244,
+      "label": "Document + Job + evento en outbox",
+      "variant": "emphasis",
+      "note": "Una sola transacción: el evento no se pierde si el broker está caído."
+    },
+    {
+      "id": "publica",
+      "from": "api",
+      "to": "rabbit",
+      "y": 346,
+      "label": "el relay publica el evento",
+      "variant": "emphasis"
+    },
+    {
+      "id": "acepta",
+      "from": "api",
+      "to": "frontend",
+      "y": 374,
+      "label": "202 Accepted + jobId",
+      "variant": "return"
+    },
+    {
+      "id": "entrega",
+      "from": "rabbit",
+      "to": "worker",
+      "y": 402,
+      "label": "entrega at-least-once",
+      "variant": "emphasis",
+      "note": "Si el Job no sigue en PENDING: ack y descarta."
+    },
+    {
+      "id": "marca-processing",
+      "from": "worker",
+      "to": "postgres",
+      "y": 466,
+      "label": "Job a PROCESSING"
+    },
+    {
+      "id": "descarga",
+      "from": "worker",
+      "to": "minio",
+      "y": 494,
+      "label": "descarga por storageKey"
+    },
+    {
+      "id": "bytes",
+      "from": "minio",
+      "to": "worker",
+      "y": 522,
+      "label": "bytes del archivo",
+      "variant": "return",
+      "note": "Cascada: 1 QR con ZXing · 2 texto embebido con PDFBox · 3 OCR con Tess4J. Gana la fuente más confiable de cada campo."
+    },
+    {
+      "id": "persiste-datos",
+      "from": "worker",
+      "to": "postgres",
+      "y": 624,
+      "label": "datos fusionados + Job a EXTRACTED",
+      "variant": "emphasis"
+    },
+    {
+      "id": "invalida",
+      "from": "worker",
+      "to": "redis",
+      "y": 652,
+      "label": "invalida la clave del job",
+      "variant": "dashed"
+    },
+    {
+      "id": "ack",
+      "from": "worker",
+      "to": "rabbit",
+      "y": 680,
+      "label": "ack manual",
+      "variant": "return"
+    },
+    {
+      "id": "polling",
+      "from": "frontend",
+      "to": "api",
+      "y": 712,
+      "label": "GET /jobs/:id (polling)"
+    },
+    {
+      "id": "lee-cache",
+      "from": "api",
+      "to": "redis",
+      "y": 740,
+      "label": "lee el cache"
+    },
+    {
+      "id": "miss",
+      "from": "redis",
+      "to": "api",
+      "y": 768,
+      "label": "miss: consulta Postgres",
+      "variant": "return"
+    },
+    {
+      "id": "estado",
+      "from": "api",
+      "to": "frontend",
+      "y": 796,
+      "label": "EXTRACTED + campos + origen",
+      "variant": "return"
+    },
+    {
+      "id": "formulario",
+      "from": "frontend",
+      "to": "usuario",
+      "y": 824,
+      "label": "formulario con el origen marcado",
+      "variant": "return",
+      "note": "Verde: dato del QR. Ámbar: leído del texto. Gris: OCR o vacío."
+    },
+    {
+      "id": "corrige",
+      "from": "usuario",
+      "to": "frontend",
+      "y": 904,
+      "label": "corrige y confirma"
+    },
+    {
+      "id": "confirma",
+      "from": "frontend",
+      "to": "api",
+      "y": 932,
+      "label": "PUT /jobs/:id/confirm",
+      "variant": "emphasis"
+    },
+    {
+      "id": "guarda-correccion",
+      "from": "api",
+      "to": "postgres",
+      "y": 960,
+      "label": "FieldCorrection + Job a CONFIRMED"
+    },
+    {
+      "id": "listo",
+      "from": "api",
+      "to": "frontend",
+      "y": 988,
+      "label": "listo para exportar CSV",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "frontend",
+      "from": 185,
+      "to": 994,
+      "type": "frontend"
+    },
+    {
+      "participant": "api",
+      "from": 185,
+      "to": 381,
+      "type": "backend"
+    },
+    {
+      "participant": "api",
+      "from": 708,
+      "to": 994,
+      "type": "backend"
+    },
+    {
+      "participant": "rabbit",
+      "from": 344,
+      "to": 408,
+      "type": "messagebus"
+    },
+    {
+      "participant": "worker",
+      "from": 398,
+      "to": 686,
+      "type": "backend"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Ingesta",
+      "items": [
+        "La API responde 202 apenas encola: el usuario nunca espera a la extracción",
+        "El archivo va a MinIO y la cola solo transporta su storageKey",
+        "El evento se escribe en la tabla outbox dentro de la misma transacción que el Job",
+        "Un relay aparte lo publica a RabbitMQ, así no hay dual-write con el broker"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Extracción en cascada",
+      "items": [
+        "El QR obligatorio de ARCA (RG 4892) da siete campos exactos, sin OCR",
+        "PDFBox cubre razón social, neto e IVA sobre el texto embebido del PDF",
+        "El OCR queda de último recurso, solo para los campos que siguen vacíos",
+        "Cada campo registra su fuente; ante discrepancia gana el QR"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Revisión",
+      "items": [
+        "El formulario marca el origen de cada campo y protege los que vienen del QR",
+        "Cada corrección queda en FieldCorrection como dataset de precisión",
+        "Recién con CONFIRMED la factura entra al historial exportable"
+      ]
+    }
+  ]
+}

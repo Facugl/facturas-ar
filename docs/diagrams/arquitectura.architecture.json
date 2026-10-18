@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "facturas-ar — Arquitectura de componentes",
+    "locale": "es",
+    "output": "docs/diagrams/arquitectura.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "usuario",
+      "type": "external",
+      "label": "Usuario",
+      "sublabel": "foto o PDF",
+      "pos": [
+        40,
+        270
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "frontend",
+      "type": "frontend",
+      "label": "Frontend",
+      "sublabel": "React + Vite · mobile-first",
+      "pos": [
+        250,
+        266
+      ],
+      "size": [
+        160,
+        68
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "upload-api-service",
+      "sublabel": "Spring Boot 3 · Java 21",
+      "tag": "auth simple",
+      "pos": [
+        550,
+        260
+      ],
+      "size": [
+        195,
+        80
+      ]
+    },
+    {
+      "id": "minio",
+      "type": "cloud",
+      "label": "MinIO",
+      "sublabel": "archivos originales",
+      "tag": "S3-compatible",
+      "pos": [
+        860,
+        90
+      ],
+      "size": [
+        170,
+        68
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL 16",
+      "sublabel": "Job + datos + outbox",
+      "pos": [
+        860,
+        260
+      ],
+      "size": [
+        185,
+        80
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis 7",
+      "sublabel": "cache-aside de /jobs/:id",
+      "tag": "TTL 30s",
+      "pos": [
+        860,
+        460
+      ],
+      "size": [
+        170,
+        68
+      ]
+    },
+    {
+      "id": "rabbit",
+      "type": "messagebus",
+      "label": "RabbitMQ",
+      "sublabel": "invoice.processing (topic)",
+      "pos": [
+        1207,
+        90
+      ],
+      "size": [
+        185,
+        68
+      ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "ocr-worker-service",
+      "sublabel": "ZXing · PDFBox · Tess4J",
+      "tag": "cascada + ack manual",
+      "pos": [
+        1200,
+        260
+      ],
+      "size": [
+        200,
+        80
+      ]
+    },
+    {
+      "id": "dlq",
+      "type": "messagebus",
+      "label": "ocr.extraction.dlq",
+      "sublabel": "reintentos + DEAD_LETTER",
+      "tag": "max 3",
+      "pos": [
+        1207,
+        460
+      ],
+      "size": [
+        185,
+        68
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Docker Compose · entorno local",
+      "wraps": [
+        "frontend",
+        "api",
+        "minio",
+        "postgres",
+        "redis",
+        "rabbit",
+        "worker",
+        "dlq"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "sube-archivo",
+      "from": "usuario",
+      "to": "frontend",
+      "label": "foto o PDF",
+      "variant": "emphasis"
+    },
+    {
+      "id": "post-documents",
+      "from": "frontend",
+      "to": "api",
+      "label": "POST /documents",
+      "variant": "emphasis"
+    },
+    {
+      "id": "guarda-archivo",
+      "from": "api",
+      "to": "minio",
+      "label": "guarda archivo"
+    },
+    {
+      "id": "persiste-job",
+      "from": "api",
+      "to": "postgres",
+      "label": "Document + Job + outbox"
+    },
+    {
+      "id": "cache-aside",
+      "from": "api",
+      "to": "redis",
+      "label": "cache-aside"
+    },
+    {
+      "id": "publica-evento",
+      "from": "api",
+      "to": "rabbit",
+      "label": "outbox relay: job.extraction.requested",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "top"
+    },
+    {
+      "id": "consume-evento",
+      "from": "rabbit",
+      "to": "worker",
+      "label": "consume",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "descarga-archivo",
+      "from": "worker",
+      "to": "minio",
+      "label": "descarga por storageKey"
+    },
+    {
+      "id": "escribe-resultado",
+      "from": "worker",
+      "to": "postgres",
+      "label": "1 tx: datos + estado",
+      "variant": "emphasis"
+    },
+    {
+      "id": "invalida-cache",
+      "from": "worker",
+      "to": "redis",
+      "label": "invalida clave",
+      "variant": "dashed"
+    },
+    {
+      "id": "nack-dlx",
+      "from": "worker",
+      "to": "dlq",
+      "label": "nack → DLX",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "reintento",
+      "from": "dlq",
+      "to": "rabbit",
+      "label": "reintento programado",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "right"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Ingesta y lectura",
+      "items": [
+        "El frontend sube PDF/JPG/PNG y después hace polling de GET /jobs/:id",
+        "Redis cachea esa lectura con TTL corto y se invalida al escribir, no se actualiza",
+        "El export CSV por rango de fechas sale de la API, con formato Excel argentino"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Extracción en cascada",
+      "items": [
+        "1 · QR de ARCA con ZXing: fecha, CUIT, punto de venta, tipo, número, importe y CAE exactos",
+        "2 · PDFBox sobre el texto embebido: razón social, neto e IVA",
+        "3 · OpenCV + Tess4J solo para lo que siga faltando; ante discrepancia gana el QR"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Confiabilidad",
+      "items": [
+        "El evento se escribe en la tabla outbox dentro de la transacción del Job: sin dual-write",
+        "El worker toma el job con un UPDATE condicional desde PENDING: el duplicado hace ack sin trabajar",
+        "Todo reproceso (DLQ, reaper de colgados, reintento manual) devuelve el Job a PENDING antes de republicar"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Observabilidad",
+      "items": [
+        "Los dos servicios exponen /actuator/prometheus vía Micrometer",
+        "La métrica principal es la tasa de detección de QR, con el origen de cada campo al lado",
+        "Logs estructurados en JSON con el jobId como correlación"
+      ]
+    }
+  ]
+}
