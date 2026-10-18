@@ -19,10 +19,6 @@
       <groupId>ar.facturas</groupId>
       <artifactId>shared-domain</artifactId>
     </dependency>
-    <dependency>
-      <groupId>ar.facturas</groupId>
-      <artifactId>shared-events</artifactId>
-    </dependency>
     <!-- Fase 1: la API corre la cascada en el request.
          Fase 2: esta dependencia se va, la hereda el worker. -->
     <dependency>

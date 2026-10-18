@@ -21,11 +21,11 @@
 
   <modules>
     <module>shared-domain</module>
-    <module>shared-events</module>
     <module>extraction</module>
     <module>upload-api-service</module>
-    <!-- ocr-worker-service entra en la Fase 2, cuando exista la cola.
-         Un módulo vacío durante seis semanas es ruido, no preparación. -->
+    <!-- shared-events y ocr-worker-service entran en la Fase 2, cuando
+         exista la cola. Un módulo vacío durante seis semanas es ruido,
+         no preparación. -->
   </modules>
 
   <properties>
@@ -47,11 +47,6 @@
       <dependency>
         <groupId>ar.facturas</groupId>
         <artifactId>shared-domain</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>ar.facturas</groupId>
-        <artifactId>shared-events</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

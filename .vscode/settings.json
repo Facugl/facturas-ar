@@ -1,0 +1,31 @@
+{
+  // target/ es salida de compilación: ya está en .gitignore y lo único
+  // que hace en el explorador es tapar la estructura real del proyecto.
+  "files.exclude": {
+    "**/target": true
+  },
+  "search.exclude": {
+    "**/target": true
+  },
+  "files.watcherExclude": {
+    "**/target/**": true
+  },
+
+  // Flyway es el dueño del esquema: los .sql de db/migration no se editan
+  // una vez aplicados, se agrega uno nuevo.
+  "files.associations": {
+    "*.sql": "sql"
+  },
+
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "[java]": {
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true
+  },
+  "[sql]": {
+    "editor.tabSize": 4
+  },
+  "[yaml]": {
+    "editor.tabSize": 2
+  }
+}

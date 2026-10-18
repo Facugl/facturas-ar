@@ -676,10 +676,6 @@ facturas-ar/
 │       ├── vo/ (Cuit, Importe, NumeroComprobante, Cae)
 │       └── enums/ (JobStatus, SourceType, TipoComprobante, FieldSource...)
 │
-├── shared-events/                  # RabbitMQ event DTOs
-│   └── src/main/java/.../events/
-│       └── JobExtractionRequestedEvent.java
-│
 ├── extraction/                     # plain Java, NO Spring Boot
 │   └── src/main/java/.../extraction/
 │       ├── ExtractionStrategy.java      # el puerto
@@ -694,6 +690,10 @@ facturas-ar/
 │   └── src/main/java/.../
 │       ├── controller/, service/, repository/
 │       └── config/                 # RabbitMQ, Redis, MinIO/S3
+│
+├── shared-events/                  # RabbitMQ event DTOs — FASE 2
+│   └── src/main/java/.../events/
+│       └── JobExtractionRequestedEvent.java
 │
 ├── ocr-worker-service/             # runnable Spring Boot app — FASE 2
 │   ├── Dockerfile                  # installs tesseract-ocr
@@ -714,7 +714,7 @@ facturas-ar/
 
 Notas clave:
 - `shared-domain` sin Spring Boot: compila más rápido, evita acoplar versiones de Spring entre servicios.
-- `shared-events` separado de `shared-domain`: los contratos de mensajería evolucionan con reglas de compatibilidad distintas a las entidades internas.
+- `shared-events` separado de `shared-domain`: los contratos de mensajería evolucionan con reglas de compatibilidad distintas a las entidades internas. **Se crea en la Fase 2**, junto con la cola: un módulo vacío durante seis semanas es ruido, no preparación.
 - `ocr-worker-service` necesita imagen Docker propia (más pesada, con Tesseract instalado) — no comparte base con `upload-api-service`.
 - `docs/adr/`: escribir a medida que se avanza, no al final (se pierde el razonamiento si se posterga).
 
