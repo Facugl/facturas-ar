@@ -486,7 +486,7 @@ El orquestador corre las estrategias en orden de prioridad, acumula resultados, 
 
 | Patrón | Qué problema concreto resuelve acá |
 |---|---|
-| **Hexagonal / Ports & Adapters** | Tenés tres adaptadores de extracción, dos de storage (local/MinIO), uno de mensajería. El dominio — parsear una factura — no debería saber de ninguno. Es de los pocos proyectos donde hexagonal se gana el lugar en vez de ser ceremonia |
+| **Hexagonal / Ports & Adapters** | Tenés tres adaptadores de extracción, dos de storage (local / S3-compatible), uno de mensajería. El dominio — parsear una factura — no debería saber de ninguno. Es de los pocos proyectos donde hexagonal se gana el lugar en vez de ser ceremonia |
 | **Strategy** | Las tres estrategias de extracción. Ver 4.2 |
 | **Chain of Responsibility** | El orden en cascada con corte temprano |
 | **Value Object** | `Cuit` (con dígito verificador), `Importe` (BigDecimal + moneda, **nunca `double`**), `NumeroComprobante` (pto_vta + nro), `Cae`. Imposible construirlos inválidos |
@@ -558,7 +558,7 @@ El del README está bien elegido. Los cambios:
 | **ZXing** (`com.google.zxing:core` + `javase`) | Detección y decodificación del QR. **La dependencia más importante del proyecto** |
 | **Apache PDFBox** `PDFRenderer` | Ya está en el stack para texto; se usa también para rasterizar la página y buscarle el QR |
 | **Jackson** | Parsear el JSON del QR. Ya viene con Spring Boot |
-| **Testcontainers** | Postgres, RabbitMQ y MinIO reales en los tests de integración. Para un proyecto cuyo argumento es "sé manejar infraestructura asíncrona", testear contra H2 y mocks contradice el argumento |
+| **Testcontainers** | Postgres, RabbitMQ y el almacenamiento de objetos reales en los tests de integración. Para un proyecto cuyo argumento es "sé manejar infraestructura asíncrona", testear contra H2 y mocks contradice el argumento |
 | **OpenCSV** o **Commons CSV** | Ya estaba. Que escriba el BOM UTF-8 y el separador `;` |
 
 **Reconsiderar:**
@@ -566,7 +566,9 @@ El del README está bien elegido. Los cambios:
 - **OpenCV** (`org.openpnp:opencv`) pasa de crítico a secundario: sirve para mejorar la detección del QR y para el OCR de fallback. Si da problemas de portabilidad, **no bloquea el MVP**. Antes sí lo hacía.
 - **Tesseract** baja de "motor del sistema" a "estrategia de último recurso". Instalá `tesseract-ocr-spa` igual, pero no le dediques la semana 3 entera.
 
-**Sin cambios y bien elegido:** Java 21, Spring Boot 3.3, Postgres 16, Flyway, RabbitMQ, Redis, MinIO, Micrometer + Prometheus + Grafana, React + Vite, Docker Compose, GitHub Actions.
+**Sin cambios y bien elegido:** Java 21, Postgres 16, Flyway, RabbitMQ, Redis, almacenamiento S3-compatible, Micrometer + Prometheus + Grafana, React + Vite, Docker Compose, GitHub Actions.
+
+> **Spring Boot pasó de 3.3 a 4.1.1** al armar el proyecto: Initializr ya no ofrece la línea 3.x. Ver §5.
 
 ### 4.7 Observabilidad: qué medir
 
@@ -598,6 +600,23 @@ Las métricas del README son genéricas. Estas cuentan la historia del dominio:
 - [x] **Sección 8 (Eventos):** transactional outbox, claim atómico, reaper de jobs colgados
 - [x] **Sección 10 (Roadmap):** la estrategia QR pasa a la semana 2; el OCR baja a la 5
 - [x] **Diagramas:** ambos regenerados — el de componentes con el outbox y las tres estrategias en el worker, el de secuencia con la cascada y el relay
+
+### Decidido durante la implementación
+
+Cosas que este documento no podía anticipar y se resolvieron al escribir el código. Quedan acá para que el razonamiento no se pierda.
+
+| Decisión | Por qué |
+|---|---|
+| **Spring Boot 4.1.1**, no 3.3 | Initializr ya no ofrece la línea 3.x. Las librerías pesadas del proyecto (PDFBox, ZXing, Tess4J) son independientes de Spring, así que el salto de major casi no las toca |
+| **Java 21**, no 25 | 25 es la LTS actual, pero Tess4J usa JNA y OpenCV usa JNI, y desde Java 24 ([JEP 472](https://openjdk.org/jeps/472)) el uso de JNI emite warnings. No rompe, pero es ruido constante justo donde vas a estar depurando |
+| **Módulo `extraction` propio**, fuera del worker | En Fase 1 lo usa la API y en Fase 2 el worker. Afuera de los dos, pasar de síncrono a asíncrono es agregar un deployable, no mover código |
+| **`shared-events` se pospone** a la Fase 2 | Quedaba vacío hasta que exista la cola, igual que `ocr-worker-service`. Era una inconsistencia tenerlo |
+| **Adobe S3Mock** en lugar de MinIO | Las imágenes de MinIO dejaron de ser públicas y LocalStack pide token de licencia. S3Mock es Apache 2.0. El código no cambia: va por el SDK de S3 igual |
+| **Postgres en el puerto 5433** | El 5432 suele estar ocupado por una instalación nativa, y con los dos escuchando la app se conecta a la base equivocada |
+| **`BIGINT` para CUIT y CAE**, `VARCHAR` en vez de `CHAR` | Surgió de validar los mapeos JPA. Postgres desaconseja `char(n)`, y once o catorce dígitos entran holgados en un `long` |
+| **Hibernate en `shared-domain`**, scope `provided` | Las columnas JSONB necesitan `@JdbcTypeCode`, que es de Hibernate y no de JPA. Es un retroceso respecto de "acá no entra ningún framework" y está documentado en el pom con las alternativas descartadas |
+| **Lombok acotado** | `@Getter`/`@Setter`/`@NoArgsConstructor` sí; `@Data`, `@EqualsAndHashCode` y `@ToString` prohibidos sobre entidades. Ver "Convenciones de código" en el README |
+| **Idioma: dominio en español, técnico y prosa en inglés** | Los términos de ARCA son sustantivos propios; traducirlos da nombres peores y rompe el vínculo con la tabla oficial |
 
 ### Pendiente: escribir los ADRs
 
