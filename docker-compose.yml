@@ -54,5 +54,29 @@ services:
     # Nota: los archivos quedan en un temp dir adentro del contenedor y se
     # pierden al recrearlo. Para desarrollo alcanza.
 
+  upload-api-service:
+    build:
+      # Contexto en la raíz: es un proyecto multi-módulo y el build
+      # necesita el pom padre y los módulos hermanos.
+      context: .
+      dockerfile: upload-api-service/Dockerfile
+    container_name: facturas-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      s3:
+        condition: service_started
+    environment:
+      # Adentro de la red de compose los servicios se alcanzan por su
+      # nombre y por su puerto INTERNO. Acá va postgres:5432, no
+      # localhost:5433: el 5433 es el mapeo al host, y desde adentro no
+      # existe. Es el error que convierte un "no conecta" en media tarde.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/facturas
+      SPRING_DATASOURCE_USERNAME: facturas
+      SPRING_DATASOURCE_PASSWORD: facturas
+      FACTURAS_STORAGE_ENDPOINT: http://s3:9090
+    ports:
+      - "8080:8080"
+
 volumes:
   postgres-data:

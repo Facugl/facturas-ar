@@ -14,6 +14,45 @@
 
 ---
 
+## 0. Arranque rápido
+
+Requisitos: Docker y nada más. El JDK y Maven solo hacen falta si vas a
+tocar el código — la imagen compila adentro con el wrapper versionado.
+
+```bash
+docker compose up -d --wait
+```
+
+Levanta Postgres, el almacenamiento S3-compatible y la API, en ese orden,
+esperando a que cada uno esté sano. Después:
+
+| Qué | Dónde |
+|---|---|
+| API | http://localhost:8080 |
+| Estado del servicio | http://localhost:8080/actuator/health |
+| Métricas | http://localhost:8080/actuator/prometheus |
+| Postgres | `localhost:5433`, base/usuario/clave `facturas` |
+| Almacenamiento S3 | http://localhost:9090 |
+
+> **Postgres va en el 5433 a propósito.** El 5432 suele estar ocupado por
+> una instalación nativa, y con los dos escuchando la aplicación se
+> conecta a la base equivocada y falla con un error de autenticación que
+> no dice nada de todo esto.
+
+Para desarrollar, lo habitual es levantar solo la infraestructura y correr
+la app desde el IDE:
+
+```bash
+docker compose up -d postgres s3
+./mvnw spring-boot:run -pl upload-api-service
+```
+
+Y para empezar de cero, incluida la base:
+
+```bash
+docker compose down -v
+```
+
 ## 1. Visión y objetivo
 
 El usuario sube una factura (PDF o foto), el sistema extrae automáticamente los datos relevantes (proveedor, CUIT, fecha, tipo y número de comprobante, CAE, neto, IVA, total) y permite exportar a CSV o PDF prolijo. Resuelve un problema tedioso real (carga manual de datos) para freelancers, monotributistas y cualquiera que junta tickets/facturas.

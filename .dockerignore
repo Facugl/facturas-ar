@@ -1,0 +1,35 @@
+# Todo lo que no haga falta adentro del contexto de build.
+#
+# Sin esto, `docker build` manda al daemon los target/ (más de 200 MB de
+# jars ya compilados), los node_modules y el .git entero: el build se
+# vuelve lento y las capas se invalidan por archivos que no importan.
+
+target/
+**/target/
+
+.git/
+.gitignore
+.github/
+
+node_modules/
+**/node_modules/
+dist/
+
+.idea/
+.vscode/
+*.iml
+
+docs/
+*.md
+
+# Comprobantes reales: no entran al repo y menos todavía a una imagen.
+fixtures-reales/
+**/fixtures/reales/
+
+.env
+.env.*
+docker-compose*.yml
+
+*.log
+.DS_Store
+Thumbs.db
