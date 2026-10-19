@@ -41,6 +41,28 @@
     <awssdk.version>2.46.7</awssdk.version>
   </properties>
 
+  <!--
+    Lombok para todos los módulos.
+
+    `optional` para que no se propague a quien consuma estos jars: es un
+    procesador de anotaciones en tiempo de compilación, no algo que haga
+    falta en runtime.
+
+    Importante dónde NO se usa: sobre entidades JPA están prohibidos
+    @Data, @EqualsAndHashCode y @ToString. Los dos primeros generan
+    equals/hashCode sobre todos los campos, lo que rompe con proxies lazy
+    y con entidades dentro de un Set, y el tercero toca las relaciones
+    lazy justo cuando estás logueando. equals/hashCode van escritos a
+    mano, por identidad.
+  -->
+  <dependencies>
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <optional>true</optional>
+    </dependency>
+  </dependencies>
+
   <dependencyManagement>
     <dependencies>
       <!-- Módulos internos -->

@@ -10,6 +10,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -28,6 +31,8 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "documents")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Document {
 
     @Id
@@ -70,9 +75,6 @@ public class Document {
     @Column(name = "uploaded_at", nullable = false)
     private Instant uploadedAt;
 
-    protected Document() {
-    }
-
     public Document(UUID id, User user, String originalFilename, String storageKey,
                     String mimeType, long fileSizeBytes, String contentHash,
                     SourceType sourceType) {
@@ -87,49 +89,14 @@ public class Document {
         this.uploadedAt = Instant.now();
     }
 
-    /** Set by the extraction pipeline once it knows whether a QR was there. */
+    /**
+     * Set by the extraction pipeline once it knows whether a QR was there.
+     *
+     * <p>A named method rather than a setter: this is a finding being
+     * recorded, not an arbitrary field being overwritten.
+     */
     public void recordQrDetection(boolean detected) {
         this.qrDetected = detected;
-    }
-
-    public UUID getId() {
-        return id;
-    }
-
-    public User getUser() {
-        return user;
-    }
-
-    public String getOriginalFilename() {
-        return originalFilename;
-    }
-
-    public String getStorageKey() {
-        return storageKey;
-    }
-
-    public String getMimeType() {
-        return mimeType;
-    }
-
-    public long getFileSizeBytes() {
-        return fileSizeBytes;
-    }
-
-    public String getContentHash() {
-        return contentHash;
-    }
-
-    public SourceType getSourceType() {
-        return sourceType;
-    }
-
-    public Boolean getQrDetected() {
-        return qrDetected;
-    }
-
-    public Instant getUploadedAt() {
-        return uploadedAt;
     }
 
     @Override

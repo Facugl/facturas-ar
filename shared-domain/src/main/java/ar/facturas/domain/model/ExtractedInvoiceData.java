@@ -13,6 +13,10 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.MapsId;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -34,19 +38,28 @@ import java.util.UUID;
  * <p>Fields are grouped by where they come from, because that is the
  * distinction that matters in this design: the first block is exact
  * whenever the QR decoded, the second depends on parsing rules.
+ *
+ * <p>This is the one entity with open setters — the extraction pipeline
+ * fills it field by field as each strategy contributes what it found. The
+ * three identity fields are excluded: they are set once, at construction.
  */
 @Entity
 @Table(name = "extracted_invoice_data")
+@Getter
+@Setter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ExtractedInvoiceData {
 
     /** Shared primary key: same value as the owning job's id. */
     @Id
     @Column(name = "job_id")
+    @Setter(AccessLevel.NONE)
     private UUID jobId;
 
     @MapsId
     @OneToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "job_id")
+    @Setter(AccessLevel.NONE)
     private Job job;
 
     /**
@@ -57,6 +70,7 @@ public class ExtractedInvoiceData {
      */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
+    @Setter(AccessLevel.NONE)
     private User user;
 
     // ── From ARCA's QR (RG 4892). Exact whenever the QR decoded ────────
@@ -142,9 +156,6 @@ public class ExtractedInvoiceData {
     @Column(name = "field_confidence")
     private Map<String, Double> fieldConfidence;
 
-    protected ExtractedInvoiceData() {
-    }
-
     public ExtractedInvoiceData(Job job, User user) {
         this.job = Objects.requireNonNull(job, "job");
         this.user = Objects.requireNonNull(user, "user");
@@ -169,178 +180,6 @@ public class ExtractedInvoiceData {
             return Optional.empty();
         }
         return getTipoComprobante().map(tipo -> tipo.sign().applyTo(total));
-    }
-
-    public UUID getJobId() {
-        return jobId;
-    }
-
-    public Job getJob() {
-        return job;
-    }
-
-    public User getUser() {
-        return user;
-    }
-
-    public Cuit getIssuerCuit() {
-        return issuerCuit;
-    }
-
-    public void setIssuerCuit(Cuit issuerCuit) {
-        this.issuerCuit = issuerCuit;
-    }
-
-    public Integer getInvoiceTypeCode() {
-        return invoiceTypeCode;
-    }
-
-    public void setInvoiceTypeCode(Integer invoiceTypeCode) {
-        this.invoiceTypeCode = invoiceTypeCode;
-    }
-
-    public Integer getPointOfSale() {
-        return pointOfSale;
-    }
-
-    public void setPointOfSale(Integer pointOfSale) {
-        this.pointOfSale = pointOfSale;
-    }
-
-    public Long getInvoiceNumber() {
-        return invoiceNumber;
-    }
-
-    public void setInvoiceNumber(Long invoiceNumber) {
-        this.invoiceNumber = invoiceNumber;
-    }
-
-    public LocalDate getIssueDate() {
-        return issueDate;
-    }
-
-    public void setIssueDate(LocalDate issueDate) {
-        this.issueDate = issueDate;
-    }
-
-    public BigDecimal getTotal() {
-        return total;
-    }
-
-    public void setTotal(BigDecimal total) {
-        this.total = total;
-    }
-
-    public String getCurrency() {
-        return currency;
-    }
-
-    public void setCurrency(String currency) {
-        this.currency = currency;
-    }
-
-    public BigDecimal getExchangeRate() {
-        return exchangeRate;
-    }
-
-    public void setExchangeRate(BigDecimal exchangeRate) {
-        this.exchangeRate = exchangeRate;
-    }
-
-    public Integer getRecipientDocType() {
-        return recipientDocType;
-    }
-
-    public void setRecipientDocType(Integer recipientDocType) {
-        this.recipientDocType = recipientDocType;
-    }
-
-    public BigDecimal getRecipientDocNumber() {
-        return recipientDocNumber;
-    }
-
-    public void setRecipientDocNumber(BigDecimal recipientDocNumber) {
-        this.recipientDocNumber = recipientDocNumber;
-    }
-
-    public Long getCae() {
-        return cae;
-    }
-
-    public void setCae(Long cae) {
-        this.cae = cae;
-    }
-
-    public String getAuthCodeType() {
-        return authCodeType;
-    }
-
-    public void setAuthCodeType(String authCodeType) {
-        this.authCodeType = authCodeType;
-    }
-
-    public String getIssuerBusinessName() {
-        return issuerBusinessName;
-    }
-
-    public void setIssuerBusinessName(String issuerBusinessName) {
-        this.issuerBusinessName = issuerBusinessName;
-    }
-
-    public BigDecimal getNetAmount() {
-        return netAmount;
-    }
-
-    public void setNetAmount(BigDecimal netAmount) {
-        this.netAmount = netAmount;
-    }
-
-    public BigDecimal getVatAmount() {
-        return vatAmount;
-    }
-
-    public void setVatAmount(BigDecimal vatAmount) {
-        this.vatAmount = vatAmount;
-    }
-
-    public String getRecipientVatCondition() {
-        return recipientVatCondition;
-    }
-
-    public void setRecipientVatCondition(String recipientVatCondition) {
-        this.recipientVatCondition = recipientVatCondition;
-    }
-
-    public String getQrPayloadRaw() {
-        return qrPayloadRaw;
-    }
-
-    public void setQrPayloadRaw(String qrPayloadRaw) {
-        this.qrPayloadRaw = qrPayloadRaw;
-    }
-
-    public String getRawOcrText() {
-        return rawOcrText;
-    }
-
-    public void setRawOcrText(String rawOcrText) {
-        this.rawOcrText = rawOcrText;
-    }
-
-    public Map<String, String> getFieldSources() {
-        return fieldSources;
-    }
-
-    public void setFieldSources(Map<String, String> fieldSources) {
-        this.fieldSources = fieldSources;
-    }
-
-    public Map<String, Double> getFieldConfidence() {
-        return fieldConfidence;
-    }
-
-    public void setFieldConfidence(Map<String, Double> fieldConfidence) {
-        this.fieldConfidence = fieldConfidence;
     }
 
     @Override

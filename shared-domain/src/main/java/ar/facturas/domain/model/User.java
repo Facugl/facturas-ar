@@ -4,6 +4,9 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -19,6 +22,8 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "users")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)   // required by JPA
 public class User {
 
     @Id
@@ -33,10 +38,6 @@ public class User {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
-    /** Required by JPA. Not for application code. */
-    protected User() {
-    }
-
     public User(UUID id, String email, String passwordHash) {
         this.id = Objects.requireNonNull(id, "id");
         this.email = Objects.requireNonNull(email, "email");
@@ -44,26 +45,13 @@ public class User {
         this.createdAt = Instant.now();
     }
 
-    public UUID getId() {
-        return id;
-    }
-
-    public String getEmail() {
-        return email;
-    }
-
-    public String getPasswordHash() {
-        return passwordHash;
-    }
-
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
-
     /**
-     * Identity by primary key. Using the whole state would break as soon
-     * as a field changes, and using the default identity comparison breaks
-     * across Hibernate sessions.
+     * Written by hand on purpose — never Lombok's {@code @EqualsAndHashCode}.
+     *
+     * <p>Identity is the primary key and nothing else. Comparing all
+     * fields breaks against a lazy proxy, and a hashCode derived from
+     * mutable state changes once the entity is persisted, which loses the
+     * object inside any {@code Set} it was added to beforehand.
      */
     @Override
     public boolean equals(Object o) {

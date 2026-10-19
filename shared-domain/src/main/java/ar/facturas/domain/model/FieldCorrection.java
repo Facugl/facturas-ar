@@ -7,6 +7,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -21,10 +24,12 @@ import java.util.UUID;
  * Collecting it later is impossible: the corrections would already be
  * gone.
  *
- * <p>Immutable: a correction is an event that happened, not a row to edit.
+ * <p>No setters: a correction is an event that happened, not a row to edit.
  */
 @Entity
 @Table(name = "field_corrections")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class FieldCorrection {
 
     @Id
@@ -47,9 +52,6 @@ public class FieldCorrection {
     @Column(name = "corrected_at", nullable = false)
     private Instant correctedAt;
 
-    protected FieldCorrection() {
-    }
-
     public FieldCorrection(UUID id, Job job, String fieldName,
                            String originalValue, String correctedValue) {
         this.id = Objects.requireNonNull(id, "id");
@@ -58,30 +60,6 @@ public class FieldCorrection {
         this.originalValue = originalValue;
         this.correctedValue = correctedValue;
         this.correctedAt = Instant.now();
-    }
-
-    public UUID getId() {
-        return id;
-    }
-
-    public Job getJob() {
-        return job;
-    }
-
-    public String getFieldName() {
-        return fieldName;
-    }
-
-    public String getOriginalValue() {
-        return originalValue;
-    }
-
-    public String getCorrectedValue() {
-        return correctedValue;
-    }
-
-    public Instant getCorrectedAt() {
-        return correctedAt;
     }
 
     @Override

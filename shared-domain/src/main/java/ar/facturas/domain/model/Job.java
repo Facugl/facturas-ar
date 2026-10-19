@@ -10,6 +10,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -31,6 +34,8 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "jobs")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Job {
 
     @Id
@@ -77,9 +82,6 @@ public class Job {
 
     @Column(name = "completed_at")
     private Instant completedAt;
-
-    protected Job() {
-    }
 
     public Job(UUID id, Document document, int maxRetries) {
         this.id = Objects.requireNonNull(id, "id");
@@ -163,56 +165,6 @@ public class Job {
 
     public boolean hasRetriesLeft() {
         return retryCount < maxRetries;
-    }
-
-    // ── Accessors ──────────────────────────────────────────────────────
-
-    public UUID getId() {
-        return id;
-    }
-
-    public Document getDocument() {
-        return document;
-    }
-
-    public JobStatus getStatus() {
-        return status;
-    }
-
-    public int getRetryCount() {
-        return retryCount;
-    }
-
-    public int getMaxRetries() {
-        return maxRetries;
-    }
-
-    public String getErrorMessage() {
-        return errorMessage;
-    }
-
-    public String getOcrEngine() {
-        return ocrEngine;
-    }
-
-    public BigDecimal getOverallConfidence() {
-        return overallConfidence;
-    }
-
-    public Job getDuplicateOf() {
-        return duplicateOf;
-    }
-
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
-
-    public Instant getStartedAt() {
-        return startedAt;
-    }
-
-    public Instant getCompletedAt() {
-        return completedAt;
     }
 
     @Override
