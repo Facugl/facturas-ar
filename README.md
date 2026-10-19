@@ -137,7 +137,7 @@ Los diagramas se generan con [Archify](https://github.com/tt-a1i/archify) a part
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/arquitectura-dark.png">
-  <img alt="Diagrama de componentes: frontend, upload-api-service, RabbitMQ, ocr-worker-service, MinIO, PostgreSQL y Redis dentro de Docker Compose" src="docs/diagrams/arquitectura-light.png">
+  <img alt="Diagrama de componentes: frontend, upload-api-service, RabbitMQ, ocr-worker-service, almacenamiento S3, PostgreSQL y Redis dentro de Docker Compose" src="docs/diagrams/arquitectura-light.png">
 </picture>
 
 **[Abrir diagrama interactivo](docs/diagrams/arquitectura.html)** · fuente: [arquitectura.architecture.json](docs/diagrams/arquitectura.architecture.json)
@@ -147,11 +147,11 @@ Los diagramas se generan con [Archify](https://github.com/tt-a1i/archify) a part
 | Componente | Responsabilidad | Qué **no** hace |
 |---|---|---|
 | `frontend` | Upload, encuadre de la foto, polling de estado, formulario de revisión, historial y export | Nada de OCR ni reglas de parseo |
-| `upload-api-service` | Auth, persistencia de `Document`/`Job`, subida a MinIO, escritura del evento en la tabla outbox, lectura cacheada, export CSV/PDF | No extrae nada: no conoce ZXing ni Tesseract |
+| `upload-api-service` | Auth, persistencia de `Document`/`Job`, subida al storage, escritura del evento en la tabla outbox, lectura cacheada, export CSV/PDF | No extrae nada: no conoce ZXing ni Tesseract |
 | `ocr-worker-service` | Consume la cola y corre la **cascada de extracción** (QR → texto embebido → OCR), fusiona por confianza, persiste resultado e invalida cache | No conoce al usuario (el evento no lleva `userId`) |
 | `RabbitMQ` | Desacople y buffer entre ingesta y procesamiento, reintentos y dead-letter | No transporta el archivo (solo el `storageKey`) |
 | `Redis` | Cache-aside de `GET /jobs/:id` (polling intensivo del frontend) | No es fuente de verdad: se invalida, no se actualiza |
-| `MinIO` | Almacenamiento de los archivos originales | — |
+| Almacenamiento S3 | Guarda los archivos originales. S3Mock en desarrollo, cualquier backend S3-compatible en producción | — |
 | `Prometheus` + `Grafana` | Scrapeo de métricas de ambos servicios y dashboards | — |
 
 ### Flujo de una factura, de punta a punta
@@ -209,7 +209,7 @@ created_at
 id (uuid)
 user_id (FK)
 original_filename
-storage_key          -- path in S3/MinIO
+storage_key          -- clave opaca en el almacenamiento S3
 mime_type
 file_size_bytes
 content_hash          -- sha256, deduplication ("you already uploaded this invoice")
@@ -271,18 +271,18 @@ job_id (FK, PK)
 user_id                     -- denormalizado desde documents.user_id (ver abajo)
 
 -- Campos que vienen del QR (exactos cuando hay QR legible)
-issuer_cuit                 -- numeric(11), con dígito verificador validado
+issuer_cuit                 -- bigint, con dígito verificador validado
 invoice_type_code           -- int, código de la tabla oficial de ARCA (1=Fact A, 6=B, 11=C...)
 point_of_sale               -- int, hasta 5 dígitos
 invoice_number              -- int, hasta 8 dígitos
 issue_date                  -- date
 total                       -- numeric(15,2)
-currency                    -- char(3), "PES" | "DOL" | ...
+currency                    -- varchar(3), "PES" | "DOL" | ...
 exchange_rate               -- numeric(19,6), cotización a pesos (1 si es ARS)
 recipient_doc_type          -- int (80=CUIT, 86=CUIL, 96=DNI, 99=sin identificar)
 recipient_doc_number        -- numeric(20)
-cae                         -- numeric(14), código de autorización
-auth_code_type              -- char(1), "E"=CAE | "A"=CAEA
+cae                         -- bigint, código de autorización
+auth_code_type              -- varchar(1), "E"=CAE | "A"=CAEA
 
 -- Campos que el QR NO trae: salen del texto embebido o del OCR
 issuer_business_name
@@ -298,6 +298,8 @@ field_confidence            -- jsonb, {"issuer_cuit": 1.0, "net_amount": 0.60, .
 ```
 
 > **Todos los montos en `NUMERIC`, nunca `float`/`double`/`REAL`.** El QR especifica el importe con hasta 13 enteros y 2 decimales, y la cotización con hasta 6 decimales.
+>
+> **Nada de `CHAR(n)`.** Postgres lo desaconseja: rellena con espacios y tiene semántica de comparación propia, sin ventaja a cambio. Y los identificadores que entran holgados en un `long` (CUIT, CAE) van en `BIGINT` y no en `NUMERIC`.
 >
 > `qr_payload_raw` y `raw_ocr_text` permiten reparsear jobs históricos si se mejoran las reglas, sin volver a correr Tesseract (la parte cara).
 >
@@ -478,7 +480,7 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 - Maven, con wrapper (`mvnw`) versionado: no hace falta tener Maven instalado para compilar
 - Spring Data JPA + PostgreSQL 16
 - Flyway (migraciones)
-- MinIO (S3-compatible, self-hosted) vía SDK `software.amazon.awssdk:s3`
+- Almacenamiento de objetos S3-compatible vía SDK `software.amazon.awssdk:s3`. En desarrollo corre **Adobe S3Mock**; ver la nota al pie de esta sección
 - Spring AMQP (`spring-boot-starter-amqp`)
 - Bean Validation
 - springdoc-openapi (Swagger UI)
@@ -504,7 +506,7 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 
 ### Testing
 - JUnit 5 + AssertJ
-- **Testcontainers** — Postgres, RabbitMQ y MinIO reales en los tests de integración. Para un proyecto cuyo argumento es "sé manejar infraestructura asíncrona", testear contra H2 y mocks contradice el argumento
+- **Testcontainers** — Postgres, RabbitMQ y el almacenamiento de objetos reales en los tests de integración. Para un proyecto cuyo argumento es "sé manejar infraestructura asíncrona", testear contra H2 y mocks contradice el argumento
 - Set de comprobantes reales versionado como fixtures de la cascada de extracción
 
 ### Export
@@ -544,8 +546,13 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 - Alternativa más rápida: Thymeleaf server-side dentro del Upload Service (descartada, mobile UX peor)
 
 ### Infraestructura local
-- Docker Compose (Postgres, RabbitMQ, Redis, MinIO, Prometheus, Grafana, ambos servicios Java, frontend)
-- GitHub Actions: build+test en PR, build de imágenes Docker en merge a main
+- Docker Compose. Hoy levanta lo que el código usa: **Postgres 16**, **Adobe S3Mock** y la propia API. RabbitMQ, Redis, Prometheus y Grafana entran en las Fases 2 y 3.
+- La API se construye con un **Dockerfile multi-stage** que parte el jar en capas (`jarmode=tools extract --layers`). Importa: el jar pesa 208 MB y copiarlo entero reescribía todo ante cualquier cambio; partido, la capa de código propio pesa 143 kB.
+- GitHub Actions: build+test en PR, build de imágenes Docker en merge a main *(pendiente)*
+
+> **Por qué S3Mock y no MinIO.** El plan original era MinIO, pero sus imágenes dejaron de ser públicas: tanto Docker Hub como quay.io piden login. La segunda opción, LocalStack, ahora exige `LOCALSTACK_AUTH_TOKEN` y sale con error sin él. S3Mock es Apache 2.0 y arranca sin credenciales ni registro.
+>
+> **El código no cambia:** va por el SDK de S3 igual, así que apuntar a S3 real, a MinIO o a cualquier otro backend es cambiar un endpoint. Esa es toda la razón por la que el almacenamiento está detrás de un puerto.
 
 ---
 
@@ -728,7 +735,7 @@ facturas-ar/
 │   ├── Dockerfile
 │   └── src/main/java/.../
 │       ├── controller/, service/, repository/
-│       └── config/                 # RabbitMQ, Redis, MinIO/S3
+│       └── config/                 # RabbitMQ, Redis, almacenamiento S3
 │
 ├── shared-events/                  # RabbitMQ event DTOs — FASE 2
 │   └── src/main/java/.../events/
@@ -759,7 +766,50 @@ Notas clave:
 
 ---
 
-## 10. Roadmap y estimación de tiempo
+## 10. Convenciones de código
+
+Decisiones tomadas una vez, para no rediscutirlas en cada archivo.
+
+### Idioma
+
+| Qué | Idioma | Ejemplo |
+|---|---|---|
+| Sustantivos del dominio fiscal argentino | español | `Cuit`, `TipoComprobante`, `FACTURA_B`, `"Nota de Crédito B"` |
+| Tipos y métodos técnicos | inglés | `JobStatus`, `isValid()`, `byCode()`, `beats()` |
+| Javadoc, comentarios y nombres de test | inglés | `returnsEmptyWhenSourceIsUnreliable` |
+
+Los términos del dominio quedan en español porque son sustantivos propios de ARCA: traducir `TipoComprobante` a `VoucherType` da un nombre *peor* —nadie en el dominio lo dice— y rompe el vínculo con la tabla oficial que el código implementa. Las descripciones de los enums son el texto literal de ARCA, y hay un test que lo fija para que nadie las "arregle" traduciéndolas.
+
+### Lombok
+
+Se usa para sacar boilerplate, con una excepción importante.
+
+```java
+@Getter                                  // en todas las entidades
+@Setter                                  // solo donde el pipeline llena campos
+@NoArgsConstructor(access = PROTECTED)   // el constructor que pide JPA
+@RequiredArgsConstructor                 // en servicios
+```
+
+**Prohibidos sobre entidades JPA:** `@Data`, `@EqualsAndHashCode` y `@ToString`.
+
+Los dos primeros generan `equals`/`hashCode` sobre todos los campos. Eso rompe de dos formas: contra un proxy lazy, comparar campo por campo da `false` aunque sea la misma fila; y un `hashCode` derivado de estado mutable cambia al persistir, con lo que la entidad se pierde dentro de cualquier `Set` al que se la haya agregado antes. `@ToString` toca las relaciones lazy justo cuando estás logueando para depurar otra cosa.
+
+Por eso `equals` y `hashCode` van **escritos a mano, por identidad**: `equals` compara solo el id, y `hashCode` devuelve una constante por clase. Parece un error y no lo es — es la única forma de que el hash sea estable antes y después de persistir.
+
+### Entidades
+
+- **Nada de setters para cambios de estado.** `Job` expone `startProcessing()`, `markExtracted()`, `markDuplicateOf()`: cada uno valida contra la máquina de estados. Un `setStatus()` dejaría pasar cualquier transición.
+- **Todos los `@ManyToOne` van `LAZY`.** El default de JPA es `EAGER`, que carga la relación en cada lectura sin que nadie la pida.
+- **Value objects que no se pueden construir inválidos.** Si existe un `Cuit`, su dígito verificador cierra.
+
+### Migraciones
+
+Flyway es el dueño del esquema; Hibernate corre con `ddl-auto: validate` y solo verifica que las entidades coincidan. **Una migración aplicada no se edita**: cada cambio es un archivo nuevo.
+
+---
+
+## 11. Roadmap y estimación de tiempo
 
 Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen realista.
 
@@ -768,7 +818,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | Semana | Foco |
 |---|---|
 | 1 | Setup monorepo, entidades JPA + Flyway, `shared-domain` con los value objects (`Cuit` con dígito verificador, `Importe`) |
-| 2 | Upload endpoint + MinIO, **estrategia QR con ZXing** |
+| 2 | Upload endpoint + almacenamiento S3, **estrategia QR con ZXing** |
 | 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo: razón social, neto, IVA |
 | 4 | Frontend mínimo: upload + formulario con origen por campo + historial, auth básica |
 | 5 | Export CSV con formato Excel-AR; Tess4J + OpenCV como estrategia de fallback |
@@ -809,7 +859,7 @@ Pulido de UX/responsive, screenshots/demo para el portfolio, README con diagrama
 
 ---
 
-## 11. Pendiente de definir
+## 12. Pendiente de definir
 
 - [x] ~~Perfil de usuario objetivo de v1.~~ **Decidido: monotributista.** El QR le resuelve el caso entero, y lo único que queda a cargo del texto/OCR es la razón social del emisor. El responsable inscripto queda para v2, con el esquema ya preparado. Ver [análisis de dominio §1.2](docs/analisis-dominio-y-diseno.md).
 - [ ] Si se adelanta la constatación del CAE contra ARCA a v1: depende de cuánto tarde el setup de certificado y clave fiscal. Timeboxear a 2 días.

@@ -29,8 +29,8 @@
     {
       "id": "minio",
       "type": "cloud",
-      "label": "MinIO",
-      "sublabel": "archivos"
+      "label": "Almacenamiento S3",
+      "sublabel": "archivos originales"
     },
     {
       "id": "postgres",

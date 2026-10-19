@@ -54,9 +54,9 @@
     {
       "id": "minio",
       "type": "cloud",
-      "label": "MinIO",
+      "label": "Almacenamiento S3",
       "sublabel": "archivos originales",
-      "tag": "S3-compatible",
+      "tag": "S3Mock en dev",
       "pos": [
         860,
         90
