@@ -40,7 +40,7 @@
       "id": "api",
       "type": "backend",
       "label": "upload-api-service",
-      "sublabel": "Spring Boot 3 · Java 21",
+      "sublabel": "Spring Boot 4 · Java 21",
       "tag": "auth simple",
       "pos": [
         550,
