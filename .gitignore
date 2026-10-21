@@ -35,7 +35,11 @@ replay_pid*
 *.iml
 *.ipr
 *.iws
-out/
+# Anclados a la raiz con "/". Sin la barra inicial, "out/" matchea
+# CUALQUIER directorio llamado out a cualquier profundidad, y se come
+# adapters/out/, que es un paquete del codigo fuente. Pasa en silencio:
+# compila local y el repo queda sin esos archivos.
+/out/
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
@@ -48,8 +52,8 @@ nb-configuration.xml
 
 # ── Frontend (React + Vite) ──
 node_modules/
-dist/
-dist-ssr/
+/frontend/dist/
+/frontend/dist-ssr/
 .vite/
 *.local
 npm-debug.log*
@@ -68,7 +72,7 @@ docker-compose.override.yml
 
 # ── Logs ──
 *.log
-logs/
+/logs/
 
 # ── Sistema operativo ──
 .DS_Store
