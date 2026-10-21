@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface JobRepository extends JpaRepository<Job, UUID> {
@@ -61,6 +62,15 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
                AND j.retryCount < j.maxRetries
             """)
     List<Job> findStuck(@Param("cutoff") Instant cutoff);
+
+    /**
+     * The most recent job for a document.
+     *
+     * <p>A document has many jobs — that is what makes reprocessing
+     * possible without a re-upload — so "the" job of a document is always
+     * the latest one.
+     */
+    Optional<Job> findFirstByDocument_IdOrderByCreatedAtDesc(UUID documentId);
 
     List<Job> findByDocument_User_IdAndStatusOrderByCreatedAtDesc(UUID userId, JobStatus status);
 

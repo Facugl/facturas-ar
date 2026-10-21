@@ -61,8 +61,14 @@ public class Document {
     @Column(name = "content_hash", nullable = false, length = 64)
     private String contentHash;
 
+    /**
+     * Null until extraction looks inside the file. Telling PDF_TEXT from
+     * PDF_SCANNED means opening the PDF and checking for text, which is
+     * extraction's job — at upload time only the MIME type is known, and
+     * that is not enough.
+     */
     @Enumerated(EnumType.STRING)
-    @Column(name = "source_type", nullable = false, length = 20)
+    @Column(name = "source_type", length = 20)
     private SourceType sourceType;
 
     /**
@@ -76,15 +82,13 @@ public class Document {
     private Instant uploadedAt;
 
     public Document(UUID id, User user, String originalFilename, String storageKey,
-                    String mimeType, long fileSizeBytes, String contentHash,
-                    SourceType sourceType) {
+                    String mimeType, long fileSizeBytes, String contentHash) {
         this.id = Objects.requireNonNull(id, "id");
         this.user = Objects.requireNonNull(user, "user");
         this.originalFilename = Objects.requireNonNull(originalFilename, "originalFilename");
         this.storageKey = Objects.requireNonNull(storageKey, "storageKey");
         this.mimeType = Objects.requireNonNull(mimeType, "mimeType");
         this.contentHash = Objects.requireNonNull(contentHash, "contentHash");
-        this.sourceType = Objects.requireNonNull(sourceType, "sourceType");
         this.fileSizeBytes = fileSizeBytes;
         this.uploadedAt = Instant.now();
     }
@@ -97,6 +101,11 @@ public class Document {
      */
     public void recordQrDetection(boolean detected) {
         this.qrDetected = detected;
+    }
+
+    /** Recorded by extraction once it has seen what is actually inside the file. */
+    public void recordSourceType(SourceType sourceType) {
+        this.sourceType = Objects.requireNonNull(sourceType, "sourceType");
     }
 
     @Override

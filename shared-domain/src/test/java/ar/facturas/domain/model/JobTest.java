@@ -1,7 +1,6 @@
 package ar.facturas.domain.model;
 
 import ar.facturas.domain.enums.JobStatus;
-import ar.facturas.domain.enums.SourceType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -28,7 +27,7 @@ class JobTest {
         User user = new User(UUID.randomUUID(), "ana@test.ar", "hash");
         Document document = new Document(
                 UUID.randomUUID(), user, "factura.pdf", "docs/2026/10/x.pdf",
-                "application/pdf", 2048L, "a".repeat(64), SourceType.PDF_TEXT);
+                "application/pdf", 2048L, "a".repeat(64));
         return new Job(UUID.randomUUID(), document, 3);
     }
 
