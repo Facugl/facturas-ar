@@ -57,6 +57,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Sin esto el runner usa el driver "docker", que no sabe exportar
+      # cache: `cache-to: type=gha` falla con "Cache export is not
+      # supported for the docker driver". buildx levanta el driver
+      # docker-container, que sí.
+      - name: Configurar buildx
+        uses: docker/setup-buildx-action@v3
+
       # No se publica en ningún lado todavía. Lo que verifica es que el
       # Dockerfile siga construyendo, que es justo lo que se rompe en
       # silencio cuando alguien agrega un módulo y olvida copiarlo.
