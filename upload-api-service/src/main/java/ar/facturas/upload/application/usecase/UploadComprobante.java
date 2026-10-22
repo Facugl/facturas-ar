@@ -7,8 +7,10 @@ import ar.facturas.domain.port.DocumentStorage;
 import ar.facturas.upload.adapters.out.persistence.DocumentRepository;
 import ar.facturas.upload.adapters.out.persistence.JobRepository;
 import ar.facturas.upload.adapters.out.persistence.UserRepository;
+import ar.facturas.upload.application.event.ComprobanteUploaded;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,6 +47,7 @@ public class UploadComprobante {
     private final DocumentRepository documents;
     private final JobRepository jobs;
     private final DocumentStorage storage;
+    private final ApplicationEventPublisher events;
 
     @Transactional
     public UploadComprobanteResult execute(UploadComprobanteCommand command) {
@@ -81,6 +84,12 @@ public class UploadComprobante {
 
         log.info("Comprobante uploaded: job={} document={} bytes={}",
                 job.getId(), document.getId(), command.content().length);
+
+        // Raised, not called. In Fase 1 a listener extracts inline after
+        // this transaction commits; in Fase 2 the same moment writes to
+        // the outbox and the worker picks it up. The upload does not know
+        // which, and does not need to.
+        events.publishEvent(new ComprobanteUploaded(job.getId()));
 
         return new UploadComprobanteResult(
                 job.getId(), document.getId(), job.getStatus(), false, document.getUploadedAt());

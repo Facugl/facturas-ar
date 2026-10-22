@@ -8,6 +8,7 @@ import ar.facturas.domain.port.DocumentStorage;
 import ar.facturas.upload.adapters.out.persistence.DocumentRepository;
 import ar.facturas.upload.adapters.out.persistence.JobRepository;
 import ar.facturas.upload.adapters.out.persistence.UserRepository;
+import ar.facturas.upload.application.event.ComprobanteUploaded;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -43,13 +45,14 @@ class UploadComprobanteTest {
     @Mock DocumentRepository documents;
     @Mock JobRepository jobs;
     @Mock DocumentStorage storage;
+    @Mock ApplicationEventPublisher events;
 
     UploadComprobante useCase;
     User user;
 
     @BeforeEach
     void setUp() {
-        useCase = new UploadComprobante(users, documents, jobs, storage);
+        useCase = new UploadComprobante(users, documents, jobs, storage, events);
         user = new User(USER_ID, "ana@test.ar", "hash");
     }
 
@@ -110,6 +113,21 @@ class UploadComprobanteTest {
         verify(storage, never()).store(any(), anyString());
         verify(documents, never()).save(any());
         verify(jobs, never()).save(any());
+        // Y no se vuelve a extraer: el trabajo ya se hizo la primera vez.
+        verify(events, never()).publishEvent(any(ComprobanteUploaded.class));
+    }
+
+    @Test
+    void raisesTheEventThatTriggersExtraction() {
+        when(users.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(documents.findByUser_IdAndContentHash(any(), anyString())).thenReturn(Optional.empty());
+        when(storage.store(any(), anyString())).thenReturn("k");
+
+        var result = useCase.execute(command());
+
+        var event = ArgumentCaptor.forClass(ComprobanteUploaded.class);
+        verify(events).publishEvent(event.capture());
+        assertThat(event.getValue().jobId()).isEqualTo(result.jobId());
     }
 
     /**
