@@ -14,6 +14,26 @@
 
 ---
 
+## Estado actual
+
+**Fase 1, semana 2 de 6.** El sistema ingesta un comprobante y le extrae
+los datos del QR de ARCA, de punta a punta.
+
+| | |
+|---|---|
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, `POST /documents` y `GET /jobs/:id`, stack dockerizado, 130 tests, CI |
+| ⬜ **Falta** | Razón social (texto embebido), OCR de respaldo, export CSV, frontend, autenticación, y toda la Fase 2 (cola, worker, Redis, outbox) |
+
+Lo que el resto de este documento describe es la **arquitectura final**,
+no el estado de avance. El roadmap de la [sección 11](#11-roadmap-y-estimación-de-tiempo)
+marca qué está hecho.
+
+> **Sin autenticación todavía.** Cada request se atribuye a un usuario de
+> desarrollo sembrado al arrancar, y la aplicación lo grita en el log.
+> Llega en la semana 4.
+
+---
+
 ## 0. Arranque rápido
 
 Requisitos: Docker y nada más. El JDK y Maven solo hacen falta si vas a
@@ -39,8 +59,41 @@ esperando a que cada uno esté sano. Después:
 > conecta a la base equivocada y falla con un error de autenticación que
 > no dice nada de todo esto.
 
-Para desarrollar, lo habitual es levantar solo la infraestructura y correr
-la app desde el IDE:
+### Probarlo
+
+```bash
+curl -F "file=@factura.pdf;type=application/pdf" localhost:8080/documents
+# 202 Accepted  {"jobId":"863f24b4-...","status":"PENDING","duplicate":false}
+
+curl localhost:8080/jobs/863f24b4-...
+```
+
+```json
+{
+  "status": "EXTRACTED",  "qrDetected": true,  "sourceType": "PDF_TEXT",
+  "confidence": 1.0,
+  "fields": {
+    "issuerCuit": "20-32629591-5",  "invoiceTypeCode": 6,
+    "pointOfSale": 6,               "invoiceNumber": 14651,
+    "issueDate": "2026-07-29",      "total": 69900.0,
+    "cae": 86305991725923,
+    "sources": { "total": "QR", "cae": "QR", "issuer_cuit": "QR" }
+  }
+}
+```
+
+Cada campo viene con su **fuente**: así el formulario de revisión sabe
+cuál dato es oficial y cuál hay que mirar con cuidado.
+
+Subir el mismo archivo otra vez devuelve `200` con el job que ya tenías.
+Subir la misma factura en un archivo distinto devuelve `202`, y el job
+queda en `DUPLICATE` apuntando al original — son dos barreras distintas,
+explicadas en el [ADR 008](docs/adr/008-deduplicacion-en-tres-capas.md).
+
+### Para desarrollar
+
+Lo habitual es levantar solo la infraestructura y correr la app desde el
+IDE:
 
 ```bash
 docker compose up -d postgres s3
@@ -117,7 +170,7 @@ El orden técnico del roadmap (sync → cola/Redis → observabilidad → pulido
 
 ### Criterios de aceptación del MVP
 
-1. **PDF de factura electrónica con QR legible → los 10 campos del QR correctos, en el 100% de los casos** de un set de al menos 20 comprobantes reales variados. No es un umbral optimista: el QR es un dato estructurado, o se lee o no se lee.
+1. **PDF de factura electrónica con QR legible → los 12 campos del QR correctos, en el 100% de los casos** de un set de al menos 20 comprobantes reales variados. No es un umbral optimista: el QR es un dato estructurado, o se lee o no se lee.
 2. **Foto de celular** de una factura electrónica impresa, con luz razonable → QR detectado en **≥ 85%** de los casos.
 3. Comprobante **sin** QR → degrada a texto/OCR sin romperse; el usuario puede completar a mano.
 4. Usuario puede corregir cualquier campo y confirmar; cada corrección queda registrada.
@@ -812,12 +865,12 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 
 | Semana | Foco |
 |---|---|
-| 1 | Setup monorepo, entidades JPA + Flyway, `shared-domain` con los value objects (`Cuit` con dígito verificador, `Importe`) |
-| 2 | Upload endpoint + almacenamiento S3, **estrategia QR con ZXing** |
-| 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo: razón social, neto, IVA |
-| 4 | Frontend mínimo: upload + formulario con origen por campo + historial, auth básica |
-| 5 | Export CSV con formato Excel-AR; Tess4J + OpenCV como estrategia de fallback |
-| 6 (buffer) | Deskew, ajuste de detección de QR en fotos difíciles, pulido |
+| ✅ 1 | Setup monorepo, entidades JPA + Flyway, `shared-domain` con los value objects (`Cuit` con dígito verificador, `Importe`) |
+| ✅ 2 | Upload endpoint + almacenamiento S3, **estrategia QR con ZXing** |
+| ⬜ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo: razón social, neto, IVA |
+| ⬜ 4 | Frontend mínimo: upload + formulario con origen por campo + historial, auth básica |
+| ⬜ 5 | Export CSV con formato Excel-AR; Tess4J + OpenCV como estrategia de fallback |
+| ⬜ 6 (buffer) | Deskew, ajuste de detección de QR en fotos difíciles, pulido |
 
 > **El orden cambió respecto de la versión anterior de este roadmap, y es importante:** la estrategia QR va primero porque con ella sola ya existe un sistema que extrae datos correctos de una factura real. El OCR, que antes ocupaba la semana 3 entera, pasa a la semana 5 como red de seguridad. Se entrega valor demostrable tres semanas antes.
 
