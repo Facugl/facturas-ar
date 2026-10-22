@@ -10,7 +10,7 @@
 |---|---|
 | Este README | Qué se construye: alcance, arquitectura, esquema, stack, roadmap |
 | [Análisis de dominio y diseño](docs/analisis-dominio-y-diseno.md) | Por qué el problema es así: perfiles de usuario, competencia, glosario fiscal, casos de uso detallados, patrones justificados y descartados |
-| `docs/adr/` *(pendiente)* | Decisiones puntuales con su contexto y sus alternativas — se escriben a medida que se avanza, no al final |
+| [Decisiones de arquitectura](docs/adr/) | Los ocho ADRs: por qué cada cosa es así y no de otra forma, con las alternativas que se descartaron |
 
 ---
 
@@ -373,7 +373,7 @@ https://www.arca.gob.ar/fe/qr/?p={JSON en Base64}
 
 Eso significa que **los campos más críticos del MVP no necesitan OCR**: salen exactos, sin ambigüedad y sin score de confianza inventado. El OCR queda para lo que el QR no trae — razón social, neto e IVA.
 
-> **ADR `004-qr-first-ocr-fallback.md`.** Es la decisión técnica más importante del proyecto.
+> **[ADR 004 — QR primero, OCR de último recurso](docs/adr/004-qr-primero-ocr-de-respaldo.md).** La decisión técnica más importante del proyecto, con las dos diferencias que aparecieron entre la especificación de ARCA y lo que ARCA realmente emite.
 
 ### Cascada de tres estrategias
 
@@ -548,7 +548,7 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 ### Infraestructura local
 - Docker Compose. Hoy levanta lo que el código usa: **Postgres 16**, **Adobe S3Mock** y la propia API. RabbitMQ, Redis, Prometheus y Grafana entran en las Fases 2 y 3.
 - La API se construye con un **Dockerfile multi-stage** que parte el jar en capas (`jarmode=tools extract --layers`). Importa: el jar pesa 208 MB y copiarlo entero reescribía todo ante cualquier cambio; partido, la capa de código propio pesa 143 kB.
-- GitHub Actions: build+test en PR, build de imágenes Docker en merge a main *(pendiente)*
+- GitHub Actions: `./mvnw verify` y build de la imagen en cada push y PR a main
 
 > **Por qué S3Mock y no MinIO.** El plan original era MinIO, pero sus imágenes dejaron de ser públicas: tanto Docker Hub como quay.io piden login. La segunda opción, LocalStack, ahora exige `LOCALSTACK_AUTH_TOKEN` y sale con error sin él. S3Mock es Apache 2.0 y arranca sin credenciales ni registro.
 >
@@ -618,7 +618,7 @@ La solución:
 - Si el relay publica y muere antes del `UPDATE`, el evento se publica dos veces — **y eso está bien**, porque el consumidor ya es idempotente (ver más abajo). At-least-once de punta a punta.
 - El `Job` nunca existe sin su evento, ni el evento sin su `Job`.
 
-> **ADR `005-transactional-outbox.md`.** Junto con el ADR del QR, es lo más sustancioso que tiene el proyecto para contar.
+> **[ADR 005 — Transactional outbox](docs/adr/005-transactional-outbox.md).** Junto con el del QR, lo más sustancioso que el proyecto tiene para contar.
 >
 > **En Fase 1 no hace falta:** sin cola, no hay dual-write. Se introduce con la cola, en Fase 2.
 
@@ -683,7 +683,7 @@ UPDATE job
 >
 > **Lista blanca, no lista negra.** "Procesá solo si está en `PENDING`" es cerrado por defecto: el día que agregues un estado nuevo, queda afuera hasta que decidas lo contrario. "Descartá si está en A, B o C" es abierto por defecto, y el estado nuevo se empieza a procesar en silencio.
 
-> **ADR `007-claim-atomico-y-reentradas.md`:** por qué el worker toma el job con un `UPDATE` condicional y por qué todos los caminos de reproceso (DLQ, reaper, reintento manual) pasan por `PENDING` en vez de republicar desde el estado en que quedaron.
+> **[ADR 007 — Claim atómico](docs/adr/007-claim-atomico.md):** por qué el worker toma el job con un `UPDATE` condicional y por qué todos los caminos de reproceso pasan por `PENDING`.
 
 ---
 
@@ -706,14 +706,7 @@ facturas-ar/
 ├── docs/
 │   ├── architecture.md
 │   ├── diagrams/                 # JSON de Archify + HTML/PNG generados
-│   ├── adr/
-│   │   ├── 001-shared-db-vs-response-event.md
-│   │   ├── 002-tesseract-vs-paddleocr.md
-│   │   ├── 003-job-states.md
-│   │   ├── 004-qr-first-ocr-fallback.md      # el más valioso del proyecto
-│   │   ├── 005-transactional-outbox.md
-│   │   ├── 006-dos-servicios-una-db.md       # por qué esto no es microservicios
-│   │   └── 007-claim-atomico-y-reentradas.md
+│   ├── adr/                        # 8 decisiones, con sus alternativas
 │   └── api/
 ├── pom.xml                         # parent, packaging=pom
 │

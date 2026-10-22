@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Un push encima de otro cancela el build anterior: lo que importa es que
+# la última versión esté sana, no gastar minutos en una intermedia.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Compilar y testear
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          # Cachea ~/.m2 entre corridas. Sin esto cada build se baja
+          # Spring Boot entero otra vez.
+          cache: maven
+
+      # El wrapper pierde el bit de ejecutable al pasar por Windows.
+      - name: Permisos del wrapper
+        run: chmod +x ./mvnw
+
+      - name: Compilar y correr los tests
+        run: ./mvnw -B --no-transfer-progress verify
+
+      # Si algo falla, el log de Maven dice qué test rompió pero no por
+      # qué. Los reportes de Surefire sí, y sin esto se pierden con el
+      # runner.
+      - name: Guardar los reportes de test
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reportes-surefire
+          path: '**/target/surefire-reports/**'
+          retention-days: 7
+
+  docker:
+    name: Construir la imagen
+    runs-on: ubuntu-latest
+    # Solo después de que los tests pasen: una imagen de código roto no
+    # le sirve a nadie.
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No se publica en ningún lado todavía. Lo que verifica es que el
+      # Dockerfile siga construyendo, que es justo lo que se rompe en
+      # silencio cuando alguien agrega un módulo y olvida copiarlo.
+      - name: Construir upload-api-service
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: upload-api-service/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

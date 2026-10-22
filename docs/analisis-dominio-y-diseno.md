@@ -618,16 +618,17 @@ Cosas que este documento no podía anticipar y se resolvieron al escribir el có
 | **Lombok acotado** | `@Getter`/`@Setter`/`@NoArgsConstructor` sí; `@Data`, `@EqualsAndHashCode` y `@ToString` prohibidos sobre entidades. Ver "Convenciones de código" en el README |
 | **Idioma: dominio en español, técnico y prosa en inglés** | Los términos de ARCA son sustantivos propios; traducirlos da nombres peores y rompe el vínculo con la tabla oficial |
 
-### Pendiente: escribir los ADRs
+### Los ADRs
 
-Escribilos a medida que implementás cada cosa, no al final — si se posterga se pierde el razonamiento, que es justamente lo que se evalúa en una entrevista.
+Escritos. Ver [docs/adr/](adr/):
 
 | ADR | Qué decide |
 |---|---|
-| `004-qr-first-ocr-fallback.md` | **El más valioso.** Por qué el QR va primero y el OCR queda de respaldo |
-| `005-transactional-outbox.md` | Por qué el evento se escribe en una tabla dentro de la transacción del `Job` en vez de publicarse directo |
-| `006-dos-servicios-una-db.md` | Por qué dos deployables sobre una DB compartida no son microservicios, y por qué está bien |
-| `007-claim-atomico-y-reentradas.md` | Por qué el worker toma el job con un `UPDATE` condicional y por qué todo reproceso pasa por `PENDING` |
+| [004](adr/004-qr-primero-ocr-de-respaldo.md) | **El más valioso.** Por qué el QR va primero y el OCR queda de respaldo |
+| [005](adr/005-transactional-outbox.md) | Por qué el evento se escribe en una tabla dentro de la transacción del `Job` |
+| [006](adr/006-dos-servicios-una-base.md) | Por qué dos deployables sobre una DB compartida no son microservicios |
+| [007](adr/007-claim-atomico.md) | Por qué el worker toma el job con un `UPDATE` condicional |
+| [008](adr/008-deduplicacion-en-tres-capas.md) | Por qué la deduplicación necesita tres capas y no una |
 
 ---
 
