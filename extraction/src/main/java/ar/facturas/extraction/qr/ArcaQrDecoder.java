@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.net.URI;
 import java.util.Base64;
+import java.util.List;
 
 /**
  * Turns the text of an ARCA QR into a typed payload.
@@ -21,12 +22,12 @@ import java.util.Base64;
 public final class ArcaQrDecoder {
 
     /**
-     * Both hosts are accepted. The spec says {@code arca.gob.ar}, but the
-     * example in that very document still prints {@code afip.gob.ar}, and
-     * comprobantes issued before the rename carry the old host. Rejecting
-     * those would mean refusing to read millions of valid invoices.
+     * The hosts ARCA serves comprobante QRs from. Both are accepted: the
+     * spec says {@code arca.gob.ar}, its own example still prints
+     * {@code afip.gob.ar}, and every comprobante issued before the rename
+     * carries the old one.
      */
-    private static final String ARCA_PATH = "/fe/qr/";
+    private static final List<String> ARCA_DOMAINS = List.of("arca.gob.ar", "afip.gob.ar");
 
     private static final String PARAM = "p=";
 
@@ -90,8 +91,18 @@ public final class ArcaQrDecoder {
     /**
      * Pulls the {@code p} parameter out, if this is an ARCA QR at all.
      *
-     * <p>Parsed as a URI rather than matched with a regular expression so
-     * that a string merely <em>containing</em> the path does not pass.
+     * <p><strong>The path is not checked, and that is deliberate.</strong>
+     * The published spec shows {@code /fe/qr/}, but a real Factura B from
+     * a Mercado Libre seller carries
+     * {@code serviciosweb.afip.gob.ar/genericos/comprobantes/cae.aspx}.
+     * Both are ARCA, both carry the same version 1 payload in {@code p}.
+     * Pinning the path would reject valid comprobantes over a detail the
+     * spec never promised to keep stable, and there is no reason to think
+     * those two are the only ones in circulation.
+     *
+     * <p>What does the gatekeeping is the host plus the payload itself:
+     * it has to be ARCA's domain, and the content has to be version 1
+     * JSON with every required field and a CUIT whose check digit holds.
      *
      * @return the Base64 payload, or {@code null} when this is not an ARCA QR
      */
@@ -102,11 +113,7 @@ public final class ArcaQrDecoder {
         } catch (IllegalArgumentException e) {
             return null;
         }
-        String host = uri.getHost();
-        String path = uri.getPath();
-        if (host == null || path == null
-                || !(host.endsWith("arca.gob.ar") || host.endsWith("afip.gob.ar"))
-                || !path.startsWith(ARCA_PATH)) {
+        if (!isArcaHost(uri.getHost())) {
             return null;
         }
         String query = uri.getRawQuery();
@@ -119,5 +126,19 @@ public final class ArcaQrDecoder {
             }
         }
         return null;
+    }
+
+    /**
+     * Exact domain or a subdomain of it — never a suffix match.
+     * {@code arca.gob.ar.sitiofalso.com} must not pass, and
+     * {@code falso-arca.gob.ar} must not either.
+     */
+    private static boolean isArcaHost(String host) {
+        if (host == null) {
+            return false;
+        }
+        String h = host.toLowerCase();
+        return ARCA_DOMAINS.stream()
+                .anyMatch(domain -> h.equals(domain) || h.endsWith("." + domain));
     }
 }

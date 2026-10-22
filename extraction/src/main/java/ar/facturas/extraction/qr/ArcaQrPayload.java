@@ -1,5 +1,6 @@
 package ar.facturas.extraction.qr;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -46,7 +47,17 @@ public record ArcaQrPayload(
         @JsonProperty("ctz") BigDecimal ctz,
         @JsonProperty("tipoDocRec") Integer tipoDocRec,
         @JsonProperty("nroDocRec") BigDecimal nroDocRec,
-        @JsonProperty("tipoCodAut") String tipoCodAut,
+        /*
+         * ARCA's own published spec names this field "tipoCodAut", and so
+         * does the example inside that spec. Real comprobantes emit
+         * "tipoCodeAut", with an extra "e" — verified against a Factura B
+         * from a Mercado Libre seller.
+         *
+         * Both are accepted. Trusting only the spec means rejecting every
+         * invoice actually in circulation; trusting only what was observed
+         * means breaking the day they fix the typo.
+         */
+        @JsonProperty("tipoCodAut") @JsonAlias("tipoCodeAut") String tipoCodAut,
         @JsonProperty("codAut") Long codAut) {
 
     /** The only version the spec defines so far. */
