@@ -13,6 +13,7 @@ import ar.facturas.upload.adapters.out.persistence.ExtractedInvoiceDataRepositor
 import ar.facturas.upload.adapters.out.persistence.JobRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -98,6 +99,25 @@ public class ExtractComprobante {
     }
 
     private void persist(UUID jobId, ExtractionResult result) {
+        try {
+            persistExtraction(jobId, result);
+        } catch (DataIntegrityViolationException e) {
+            // Two uploads of the same comprobante raced: both looked,
+            // both found nothing, both tried to insert. The unique index
+            // let one through.
+            //
+            // This is the duplicate case arriving by a different road, so
+            // it ends in the same place. Letting it fall through to the
+            // generic handler would mark the job FAILED, and a FAILED job
+            // gets retried — straight back into the same collision, until
+            // it exhausted its retries and died in DEAD_LETTER over a
+            // situation that is not an error at all.
+            log.info("Job {} lost a race for the same comprobante; marking duplicate", jobId);
+            markDuplicateAfterRace(jobId, result);
+        }
+    }
+
+    private void persistExtraction(UUID jobId, ExtractionResult result) {
         tx.executeWithoutResult(status -> {
             Job job = jobs.findById(jobId).orElseThrow();
             Document document = job.getDocument();
@@ -121,6 +141,28 @@ public class ExtractComprobante {
                                 jobId, result.fields().size(), result.qrDetected());
                     });
 
+            jobs.save(job);
+        });
+    }
+
+    /**
+     * Re-reads the winner of the race and points at it.
+     *
+     * <p>In its own transaction: the one that hit the constraint is
+     * rollback-only and cannot be used for anything else.
+     */
+    private void markDuplicateAfterRace(UUID jobId, ExtractionResult result) {
+        tx.executeWithoutResult(status -> {
+            Job job = jobs.findById(jobId).orElseThrow();
+            findDuplicate(job.getDocument().getUser().getId(), result)
+                    .ifPresentOrElse(
+                            original -> job.markDuplicateOf(original),
+                            // The constraint fired but the row is not
+                            // there to point at. Nothing sane left to do,
+                            // and a wrong DUPLICATE would be worse than
+                            // an honest failure.
+                            () -> job.markFailed(
+                                    "Unique constraint fired but no matching comprobante was found"));
             jobs.save(job);
         });
     }
