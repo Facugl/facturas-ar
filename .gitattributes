@@ -1,0 +1,20 @@
+# Todo el repo guarda LF, y lo entrega LF también en el checkout.
+#
+# Hacía falta porque el repo venía con las dos convenciones mezcladas:
+# 27 archivos en CRLF y 66 en LF, sin ningún criterio — depende de con
+# qué herramienta se creó cada uno en Windows. Eso ensucia los diffs
+# (un archivo tocado aparece entero modificado) y, peor, el Dockerfile
+# y el workflow de CI estaban en CRLF: un script con CRLF dentro de un
+# contenedor Linux falla con "bad interpreter: no such file".
+#
+# `eol=lf` en vez de `eol=native` es deliberado: todo lo que ejecuta
+# este repo —la imagen, el CI, el wrapper de Maven— corre en Linux.
+* text=auto eol=lf
+
+# Que git no intente normalizar nada acá adentro.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.jar binary
+*.xls binary
