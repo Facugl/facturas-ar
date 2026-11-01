@@ -43,6 +43,17 @@ public final class ArcaQrDecoder {
             return new QrDecodeResult.NotAnArcaQr(qrText);
         }
 
+        // ARCA's URL with nothing after `p=`. Observed on a real
+        // comprobante: the emitter's billing software prints the QR but
+        // never appends the payload, so the comprobante cannot be
+        // verified from its own code. Worth its own message — "not valid
+        // JSON" would send whoever reads the anomaly looking for a
+        // parsing bug that is not there.
+        if (base64.isEmpty()) {
+            return new QrDecodeResult.Malformed(
+                    "the p parameter is empty: the QR carries ARCA's URL with no payload");
+        }
+
         byte[] json;
         try {
             // The URL may travel through systems that re-encode it, so

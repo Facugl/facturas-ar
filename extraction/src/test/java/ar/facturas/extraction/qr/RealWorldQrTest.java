@@ -12,9 +12,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * says it should.
  *
  * <p>Every case here was found by running the decoder against a real
- * invoice and watching it fail. They are kept because each one is a
- * place where ARCA's published specification and ARCA's implementation
- * disagree — and the implementation is the one that issues the invoices.
+ * invoice and watching it fail. Most are places where ARCA's published
+ * specification and ARCA's implementation disagree — and the
+ * implementation is the one that issues the invoices. One is an emitter
+ * whose software prints the QR without a payload, which the spec does
+ * not contemplate at all.
  *
  * <p>The QR text is reproduced verbatim but the payload is <strong>not a
  * real comprobante</strong>: the CUIT, the amount and the CAE were
@@ -100,6 +102,26 @@ class RealWorldQrTest {
 
         assertThat(payload.tipoDocRec()).isEqualTo(96);       // 96 = DNI
         assertThat(payload.nroDocRec()).isNotNull();
+    }
+
+    /**
+     * A comprobante from a local shop carries ARCA's URL and nothing
+     * after {@code p=} — thirty-three characters, no payload. The
+     * emitter's billing software prints the code without ever filling
+     * it, so that comprobante cannot be verified from its own QR.
+     *
+     * <p>There is nothing to recover here, and that is the point: it has
+     * to be reported as a broken ARCA QR rather than mistaken for
+     * somebody else's QR, because the anomaly is what tells the user why
+     * their comprobante came back empty.
+     */
+    @Test
+    @DisplayName("an emitter that prints the QR with no payload at all")
+    void reportsAnArcaUrlWithAnEmptyPayload() {
+        var result = decoder.decode("https://www.arca.gob.ar/fe/qr/?p=");
+
+        assertThat(result).isInstanceOf(QrDecodeResult.Malformed.class);
+        assertThat(((QrDecodeResult.Malformed) result).reason()).contains("empty");
     }
 
     /**
