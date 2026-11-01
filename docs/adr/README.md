@@ -18,6 +18,11 @@ pierde rápido, y es lo único que sirve cuando hay que revisarla.
 | [006](006-dos-servicios-una-base.md) | Dos servicios sobre una base: por qué no son microservicios | Aceptada |
 | [007](007-claim-atomico.md) | Claim atómico y una sola puerta de reproceso | Aceptada · implementada |
 | [008](008-deduplicacion-en-tres-capas.md) | Deduplicación en tres capas | Aceptada · implementada |
+| [009](009-deteccion-del-qr-en-el-cliente.md) | El QR se detecta en el cliente, no en el servidor | Aceptada · pendiente (semana 4) |
+
+El [009](009-deteccion-del-qr-en-el-cliente.md) revisa al
+[004](004-qr-primero-ocr-de-respaldo.md): no lo reemplaza, le corrige el
+supuesto que se cayó al medir contra comprobantes reales.
 
 **Formato:** contexto, decisión, consecuencias, alternativas descartadas.
 Una página. Si no entra, la decisión probablemente sean dos.

@@ -10,7 +10,7 @@
 |---|---|
 | Este README | Qué se construye: alcance, arquitectura, esquema, stack, roadmap |
 | [Análisis de dominio y diseño](docs/analisis-dominio-y-diseno.md) | Por qué el problema es así: perfiles de usuario, competencia, glosario fiscal, casos de uso detallados, patrones justificados y descartados |
-| [Decisiones de arquitectura](docs/adr/) | Los ocho ADRs: por qué cada cosa es así y no de otra forma, con las alternativas que se descartaron |
+| [Decisiones de arquitectura](docs/adr/) | Los nueve ADRs: por qué cada cosa es así y no de otra forma, con las alternativas que se descartaron |
 
 ---
 
@@ -21,12 +21,19 @@ los datos del QR de ARCA, de punta a punta.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, `POST /documents` y `GET /jobs/:id`, stack dockerizado, 130 tests, CI |
-| ⬜ **Falta** | Razón social (texto embebido), OCR de respaldo, export CSV, frontend, autenticación, y toda la Fase 2 (cola, worker, Redis, outbox) |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, `POST /documents` y `GET /jobs/:id`, stack dockerizado, 135 tests, CI |
+| ⬜ **Falta** | Razón social (texto embebido), detección del QR en el cliente, OCR de respaldo, export CSV, frontend, autenticación, y toda la Fase 2 (cola, worker, Redis, outbox) |
 
 Lo que el resto de este documento describe es la **arquitectura final**,
 no el estado de avance. El roadmap de la [sección 11](#11-roadmap-y-estimación-de-tiempo)
 marca qué está hecho.
+
+> **Medido contra comprobantes reales, no contra fixtures.** Un PDF con
+> QR entrega los 12 campos; **ninguna de ocho fotos de celular entregó
+> datos**, cuatro de ellas primeros planos. Eso tiró abajo un criterio de
+> aceptación y movió la detección del QR al navegador. La medición está
+> en la [sección 6](#cobertura-medida-sobre-comprobantes-reales) y la
+> decisión en el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md).
 
 > **Sin autenticación todavía.** Cada request se atribuye a un usuario de
 > desarrollo sembrado al arrancar, y la aplicación lo grita en el log.
@@ -171,7 +178,7 @@ El orden técnico del roadmap (sync → cola/Redis → observabilidad → pulido
 ### Criterios de aceptación del MVP
 
 1. **PDF de factura electrónica con QR legible → los 12 campos del QR correctos, en el 100% de los casos** de un set de al menos 20 comprobantes reales variados. No es un umbral optimista: el QR es un dato estructurado, o se lee o no se lee.
-2. **Foto de celular** de una factura electrónica impresa, con luz razonable → QR detectado en **≥ 85%** de los casos.
+2. **Foto de celular:** el QR se detecta **en el navegador, antes de subir**, y la foto se acepta solo si decodificó. Criterio verificable en lugar de un porcentaje: no hay foto aceptada sin QR leído. *(Semana 4 — ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md).)*
 3. Comprobante **sin** QR → degrada a texto/OCR sin romperse; el usuario puede completar a mano.
 4. Usuario puede corregir cualquier campo y confirmar; cada corrección queda registrada.
 5. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción. Un archivo ilegible o que no es una factura **no es un fallo del sistema**: el formulario sale vacío y el documento queda guardado igual.
@@ -179,6 +186,13 @@ El orden técnico del roadmap (sync → cola/Redis → observabilidad → pulido
 7. Un usuario no puede acceder a datos de otro — con test automatizado que lo demuestre.
 8. El sistema sobrevive a que el worker se caiga a mitad de un procesamiento: el mensaje se reprocesa y el resultado no se duplica. *(Fase 2 — es el criterio que justifica toda la mensajería.)*
 9. Siempre hay feedback visible de estado ("procesando"), aunque la Fase 1 sea síncrona.
+
+> **El criterio (2) decía "≥ 85% de las fotos" y se cayó al medirlo.** Se
+> midió sobre comprobantes reales y el resultado fue 0 de 8 fotos, cuatro
+> de ellas primeros planos. El QR de ARCA es demasiado denso para
+> sobrevivir a una foto de papel térmico. La historia completa está en
+> [cobertura medida](#cobertura-medida-sobre-comprobantes-reales) y la
+> decisión en el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md).
 
 ---
 
@@ -460,6 +474,59 @@ Agregar una estrategia nueva (PaddleOCR en v2, por ejemplo) no toca el orquestad
 - Si hay QR pero el Base64 no decodifica o el JSON no valida contra el schema v1 → se ignora y se sigue por texto/OCR, registrando la anomalía (puede ser un QR falso).
 - **El preprocesamiento de imagen cambia de objetivo:** el deskew y la binarización ahora sirven, en primer lugar, para que ZXing encuentre el código. Que además ayuden a Tesseract es un beneficio secundario.
 
+### Cobertura medida sobre comprobantes reales
+
+El criterio de aceptación original apostaba a detectar el QR en el **85%
+de las fotos de celular**. Se midió con la estrategia ya implementada
+—`TRY_HARDER` y los dos binarizadores— sobre comprobantes reales:
+
+| Comprobante | Formato | Resultado |
+|---|---|---|
+| Factura B, vendedor de Mercado Libre | **PDF** | ✅ los 12 campos del QR |
+| Factura A de proveedor (×2 fotos) | foto | ❌ sin QR encontrado |
+| Comercio local (foto + primer plano) | foto | ❌ sin QR encontrado |
+| Comercio local (×2 fotos) | foto | ❌ sin QR encontrado |
+| Comercio local (foto + primer plano) | foto | ⚠️ QR leído, **payload vacío** |
+| Factura de luz (foto + primer plano del QR) | foto | ⚠️ sin QR de ARCA (el suyo es de pago) |
+
+**Un PDF entrega el 100% de los campos. Ocho fotos entregaron cero** —
+incluidos cuatro primeros planos sacados apuntando al código.
+
+**El problema es la densidad, no la resolución.** El QR de ARCA codifica
+~268 caracteres, así que necesita una matriz grande; impreso en dos
+centímetros de papel térmico y fotografiado con el papel curvado, no le
+quedan píxeles por módulo para que ZXing resuelva la grilla. La prueba
+está en la factura de luz: su QR de pago, de 55 caracteres, se leyó sin
+problema **en una foto de la misma clase**. El papel es igual de chico;
+lo que cambia es cuánta información hay que meter ahí. Y el
+preprocesamiento no lo arregla: el deskew y la binarización recuperan
+contraste, no información que la cámara nunca captó.
+
+Dos hallazgos más, de los que solo aparecen con papel real:
+
+- **Hay emisores que imprimen el QR sin payload.** Un comercio local
+  emite `https://www.arca.gob.ar/fe/qr/?p=` y nada más — 33 caracteres.
+  Ese comprobante no se puede constatar desde su propio código. Es un bug
+  del emisor; el decodificador lo reporta como `Malformed` con un mensaje
+  propio, y es la primera vez que un dato real ejercita esa rama.
+- **No todo comprobante lleva QR de ARCA.** La factura de luz y un cupón
+  de pago llevan QR, pero de pago. El decodificador los descarta sin
+  ruido y sigue por la estrategia siguiente, que es justo lo que tiene
+  que hacer.
+
+> **La consecuencia: el QR se detecta en el cliente.** El navegador
+> decodifica cuadro a cuadro con la cámara abierta y la foto se acepta
+> solo cuando el QR se leyó, así el usuario corrige el encuadre con la
+> respuesta delante. El servidor sigue decodificando igual y no le cree
+> al cliente: lo que manda el browser entra por el mismo validador y, si
+> el servidor no pudo corroborarlo contra la imagen, queda marcado como
+> `QR_CLIENT` con confianza 0.95 en vez de 1.0.
+> Ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md).
+>
+> **Y el OCR no era la respuesta a esto.** El papel borroso que no deja
+> leer el QR tampoco deja leer el texto. El OCR queda para lo que siempre
+> fue: comprobantes sin QR y la razón social.
+
 ### Preprocesamiento de imagen
 
 Con OpenCV (`org.openpnp:opencv`, o `boofcv` si da problemas de portabilidad):
@@ -596,6 +663,7 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 
 ### Frontend
 - React + Vite, sin Redux (React Query alcanza para polling de estado)
+- **Detección del QR en vivo con la cámara**, antes de subir: [`BarcodeDetector`](https://developer.mozilla.org/en-US/docs/Web/API/BarcodeDetector) donde existe, `jsQR` de respaldo. Confirmar solo se habilita cuando el QR decodificó — ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md)
 - Alternativa más rápida: Thymeleaf server-side dentro del Upload Service (descartada, mobile UX peor)
 
 ### Infraestructura local
@@ -868,13 +936,17 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | ✅ 1 | Setup monorepo, entidades JPA + Flyway, `shared-domain` con los value objects (`Cuit` con dígito verificador, `Importe`) |
 | ✅ 2 | Upload endpoint + almacenamiento S3, **estrategia QR con ZXing** |
 | ⬜ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo: razón social, neto, IVA |
-| ⬜ 4 | Frontend mínimo: upload + formulario con origen por campo + historial, auth básica |
-| ⬜ 5 | Export CSV con formato Excel-AR; Tess4J + OpenCV como estrategia de fallback |
-| ⬜ 6 (buffer) | Deskew, ajuste de detección de QR en fotos difíciles, pulido |
+| ⬜ 4 | Frontend mínimo: upload + **detección del QR en vivo con la cámara** + formulario con origen por campo + historial, auth básica |
+| ⬜ 5 | Export CSV con formato Excel-AR; Tess4J + OpenCV para comprobantes **sin** QR |
+| ⬜ 6 (buffer) | Timebox de medio día al decodificado por mosaicos en el servidor, pulido |
 
-> **El orden cambió respecto de la versión anterior de este roadmap, y es importante:** la estrategia QR va primero porque con ella sola ya existe un sistema que extrae datos correctos de una factura real. El OCR, que antes ocupaba la semana 3 entera, pasa a la semana 5 como red de seguridad. Se entrega valor demostrable tres semanas antes.
+> **El orden cambió respecto de la versión anterior de este roadmap, y es importante:** la estrategia QR va primero porque con ella sola ya existe un sistema que extrae datos correctos de una factura real. El OCR, que antes ocupaba la semana 3 entera, baja a la semana 5. Se entrega valor demostrable tres semanas antes.
+>
+> Se lo llamó "red de seguridad" pensando que levantaría las fotos donde el QR no se lee. **No las levanta** —el papel que no deja leer el QR tampoco deja leer el texto— y para eso está la detección en el cliente de la semana 4. El OCR queda para comprobantes **sin** QR: anteriores a 2021, no electrónicos, cupones.
 
 **Antes de la semana 2:** juntar un set de 20 comprobantes reales variados (propios y de conocidos). Sin eso no hay forma de saber si la cascada funciona, y es el insumo que más cuesta conseguir después.
+
+> **Esto se hizo, y pagó solo.** Con nueve comprobantes reales ya se cayó un criterio de aceptación y aparecieron tres diferencias entre la especificación de ARCA y lo que se emite en la calle. Ninguna la podían encontrar los tests sintéticos: todos usaban el PDF oficial como fuente de verdad. Ver [cobertura medida](#cobertura-medida-sobre-comprobantes-reales).
 
 **Opcional:** si hay tiempo, mostrar a un par de personas y ajustar el parser con esos casos antes de seguir — no es un paso obligatorio del roadmap.
 
@@ -891,7 +963,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 
 | Semana | Foco |
 |---|---|
-| 1 | Actuator + Micrometer, métricas custom (empezando por la tasa de detección de QR y el origen por campo), Prometheus scrapeando |
+| 1 | Actuator + Micrometer, métricas custom (empezando por la tasa de detección de QR **con tag `source`: cliente, servidor o ninguno**, ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md), y el origen por campo), Prometheus scrapeando |
 | 2 (parcial) | Dashboards Grafana, logs estructurados |
 
 ### Fase 4 — Pulido de frontend y README final (1-2 semanas)

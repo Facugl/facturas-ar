@@ -54,6 +54,13 @@ Esto no debilita el proyecto: **lo mejora**. Un sistema que hace "OCR a todo" es
 5. **El preprocesamiento de imagen cambia de objetivo.** Deskew y binarización dejan de ser "para que Tesseract lea mejor" y pasan a ser, en primer lugar, "para que el detector de QR encuentre el código". ZXing es bastante tolerante, pero una foto torcida con sombra le cuesta.
 
 > **ADR a escribir:** `004-qr-first-ocr-fallback.md`. Es el ADR más valioso del proyecto.
+>
+> **Escrito, y ya revisado por los datos:** el punto (2) acertó en que la
+> precisión dejaba de depender de Tesseract, y erró en dónde quedaba el
+> riesgo. No quedó en la razón social: quedó en **que la cámara pueda
+> leer el QR**, y ahí 0 de 8 fotos reales fallaron. El punto (5) también
+> prometía demasiado — el preprocesamiento recupera contraste, no
+> píxeles. Ver [ADR 009](adr/009-deteccion-del-qr-en-el-cliente.md).
 
 ---
 
@@ -417,7 +424,7 @@ El QR hace que "perfecto" sea alcanzable para el caso principal. Aprovechalo: ac
 Reemplazan a los del README, que estaban calibrados para un mundo sin QR.
 
 1. Un PDF de factura electrónica con QR legible → los 7 campos del QR correctos, **100%** de los casos de un set de al menos 20 comprobantes reales variados.
-2. Una **foto de celular** de una factura electrónica impresa, con luz razonable → QR detectado en **≥ 85%** de los casos.
+2. Una **foto de celular**: el QR se detecta en el navegador, antes de subir, y la foto se acepta solo si decodificó. ~~QR detectado en ≥ 85% de los casos.~~ **Este criterio se midió y se cayó:** 0 de 8 fotos reales entregaron datos, cuatro de ellas primeros planos. Ver [ADR 009](adr/009-deteccion-del-qr-en-el-cliente.md).
 3. Un comprobante **sin** QR → degrada a OCR, no se rompe, el usuario puede completar a mano.
 4. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción.
 5. El CSV abre en Excel con montos numéricos y acentos correctos, sin intervención.
@@ -425,6 +432,12 @@ Reemplazan a los del README, que estaban calibrados para un mundo sin QR.
 7. El sistema sobrevive a que el worker se caiga a mitad de un procesamiento: el mensaje se reprocesa y no se duplica el resultado.
 
 El (7) es el criterio que justifica toda la mensajería. Escribí el test que mata el worker a propósito.
+
+> **Lección del (2):** era el único criterio con un porcentaje estimado y
+> fue el único que se cayó. Los demás son verificables —se cumple o no se
+> cumple— y por eso sobrevivieron al contacto con comprobantes reales. Un
+> criterio de aceptación con un número que nadie midió es una esperanza
+> con formato de requisito.
 
 ### 3.5 Riesgos
 
@@ -576,7 +589,7 @@ Las métricas del README son genéricas. Estas cuentan la historia del dominio:
 
 | Métrica | Tipo | Por qué |
 |---|---|---|
-| `invoice.qr.detection.rate` | Counter con tag `detected` | **La métrica más importante del sistema.** Es el indicador de salud del pipeline entero |
+| `invoice.qr.detection.rate` | Counter con tags `detected`, `source` | **La métrica más importante del sistema.** Es el indicador de salud del pipeline entero. El tag `source` (`client`/`server`/`none`) es obligatorio desde el [ADR 009](adr/009-deteccion-del-qr-en-el-cliente.md): un sistema donde el 90% de los QR los lee el cliente está sano, y el promedio de los dos no dice nada |
 | `invoice.extraction.source` | Counter con tags `field`, `source` | Qué proporción de cada campo viene de QR vs OCR. Dice exactamente dónde invertir |
 | `invoice.field.correction.rate` | Counter con tag `field` | Qué campo corrige más el usuario = qué regla de parseo está peor |
 | `invoice.job.processing.time` | Timer con tag `strategy` | Separado por estrategia: el QR debe ser milisegundos, el OCR segundos |
@@ -617,6 +630,7 @@ Cosas que este documento no podía anticipar y se resolvieron al escribir el có
 | **Hibernate en `shared-domain`**, scope `provided` | Las columnas JSONB necesitan `@JdbcTypeCode`, que es de Hibernate y no de JPA. Es un retroceso respecto de "acá no entra ningún framework" y está documentado en el pom con las alternativas descartadas |
 | **Lombok acotado** | `@Getter`/`@Setter`/`@NoArgsConstructor` sí; `@Data`, `@EqualsAndHashCode` y `@ToString` prohibidos sobre entidades. Ver "Convenciones de código" en el README |
 | **Idioma: dominio en español, técnico y prosa en inglés** | Los términos de ARCA son sustantivos propios; traducirlos da nombres peores y rompe el vínculo con la tabla oficial |
+| **La detección del QR se mueve al cliente** | Medido contra comprobantes reales: los PDF entregan los 12 campos, ninguna de ocho fotos entregó nada. El QR de ARCA es demasiado denso para una foto de papel térmico. Es el supuesto más caro que se cayó en todo el proyecto. Ver [ADR 009](adr/009-deteccion-del-qr-en-el-cliente.md) |
 
 ### Los ADRs
 
@@ -629,6 +643,7 @@ Escritos. Ver [docs/adr/](adr/):
 | [006](adr/006-dos-servicios-una-base.md) | Por qué dos deployables sobre una DB compartida no son microservicios |
 | [007](adr/007-claim-atomico.md) | Por qué el worker toma el job con un `UPDATE` condicional |
 | [008](adr/008-deduplicacion-en-tres-capas.md) | Por qué la deduplicación necesita tres capas y no una |
+| [009](adr/009-deteccion-del-qr-en-el-cliente.md) | Por qué el QR se detecta en el navegador y no en el servidor — el ADR que corrige al 004 con datos medidos |
 
 ---
 

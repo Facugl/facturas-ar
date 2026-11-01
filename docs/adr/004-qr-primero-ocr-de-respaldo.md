@@ -62,12 +62,20 @@ que ZXing encuentre el código.
 detección del QR** en fotos de celular. Por eso es la métrica principal
 del sistema.
 
-## Lo que solo apareció con una factura real
+> **Ese riesgo se midió y se materializó.** Sobre comprobantes reales:
+> los PDF con QR entregan los 12 campos, y **ninguna de ocho fotos de
+> celular entregó datos** — incluidos cuatro primeros planos. El QR de
+> ARCA es demasiado denso para sobrevivir a una foto de papel térmico.
+> La consecuencia está en el [ADR 009](009-deteccion-del-qr-en-el-cliente.md):
+> la detección se mueve al navegador, en vivo, y la foto se acepta solo
+> si el QR se leyó. Esta decisión no cambia; cambia por dónde entra la
+> imagen.
 
-Dos diferencias entre lo que ARCA documenta y lo que ARCA emite. Las dos
-se encontraron corriendo el decodificador contra una Factura B real; los
-tests sintéticos no podían encontrarlas porque todos usaban el PDF
-oficial como fuente de verdad.
+## Lo que solo apareció con comprobantes reales
+
+Tres diferencias entre lo que ARCA documenta y lo que se emite en la
+calle. Ninguna la podían encontrar los tests sintéticos, porque todos
+usaban el PDF oficial de la especificación como fuente de verdad.
 
 **La URL no es la documentada.**
 
@@ -92,6 +100,20 @@ El ejemplo que está dentro de ese mismo PDF usa la primera forma. Se
 aceptan ambas: confiar solo en la especificación rechaza todas las
 facturas en circulación, confiar solo en lo observado rompe el día que lo
 arreglen.
+
+**Hay emisores que imprimen el QR sin payload.** Un comercio local emite
+el código con el parámetro `p` vacío:
+
+```
+https://www.arca.gob.ar/fe/qr/?p=
+```
+
+Treinta y tres caracteres: la URL y nada más. Ese comprobante no se puede
+constatar desde su propio código. Es un bug del software de facturación
+del emisor y no hay nada que recuperar, pero confirma que la rama
+`Malformed` —"un QR que dice ser de ARCA y no se sostiene"— no era
+defensa hipotética. Tiene su propio mensaje de anomalía, separado del de
+JSON inválido.
 
 ## Alternativas descartadas
 
