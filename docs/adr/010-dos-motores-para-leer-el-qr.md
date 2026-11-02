@@ -93,8 +93,19 @@ Detalles que la implementación fija, cada uno con su test:
 - **OpenCV viene de `org.bytedeco`, no de `org.openpnp`.** El build de
   openpnp es solo el core y no trae `opencv_contrib`, que es donde vive
   `wechat_qrcode`. Se verificó mirando las clases de los dos jars.
-  Bytedeco expone **el mismo namespace `org.opencv.*`** más los módulos
-  de contrib, así que es reemplazo directo.
+- **Se usa la API de JavaCPP y no la de `org.opencv.*`.** Esta es la
+  decisión menos obvia del ADR y costó un CI roto. Bytedeco expone los
+  dos namespaces, y `org.opencv.*` es el familiar — el mismo que usaría
+  cualquiera que ya haya tocado OpenCV en Java. El problema es cómo se
+  sirve: `org.opencv.*` lo atiende **una sola librería nativa monolítica**
+  que abarca todos los módulos de OpenCV, `highgui` incluido. Y `highgui`
+  quiere GTK y X11. En Windows cargó sin chistar; en el runner de Linux
+  reventó con `no jniopencv_highgui in java.library.path`, porque un
+  servidor headless no tiene toolkit gráfico. Cargando
+  `opencv_wechat_qrcode` de JavaCPP entra solo lo que este motor
+  necesita: wechat_qrcode, dnn, imgproc, core. Instalar GTK en una imagen
+  de servidor para contentar a un módulo que nadie llama habría sido
+  arreglarlo por el lado equivocado.
 - **Sin archivos de modelo.** `WeChatQRCode` acepta opcionalmente dos
   modelos Caffe —un detector CNN y un paso de superresolución—. El 4 de 6
   se midió con el constructor sin argumentos, o sea sin ninguno de los
@@ -117,6 +128,13 @@ Detalles que la implementación fija, cada uno con su test:
   leer su arreglo de atrás sin copiar cortaría la imagen en diagonal: un
   bug que se ve como un decodificador roto. Hay un test por cada tipo de
   imagen que el pipeline puede entregar.
+- **Al texto decodificado se le recorta un NUL.** OpenCV devuelve el
+  resultado como un `std::string` cuyo tamaño cuenta su propio
+  terminador, así que un payload de 309 caracteres llega con 310 y no
+  coincide con nada. Ni `getString` ni `getStringBytes` lo limpian. Se
+  recorta a mano, con el motivo escrito al lado: el síntoma es que el
+  valor obtenido y el esperado **se imprimen idénticos** y el assert
+  falla igual, que sin un test es media hora desagradable.
 
 ## Consecuencias
 
