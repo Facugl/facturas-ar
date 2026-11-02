@@ -288,7 +288,7 @@ Este es el corazón del proyecto. El flujo en cascada:
      Si PDF_TEXT: extraer texto con PDFBox
      Aplicar las reglas de parseo sobre texto limpio
      Poblar SOLO los campos que el QR no trajo:
-       razón social, neto, IVA por alícuota, percepciones
+       razón social  (neto, IVA por alícuota y percepciones: v2)
 
 6. ── Estrategia OCR  (confianza 0.3–0.8) ──────────────
      Si todavía faltan campos y el origen lo amerita:

@@ -21,8 +21,8 @@ los datos del QR de ARCA, de punta a punta.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, `POST /documents` y `GET /jobs/:id`, stack dockerizado, 150 tests, CI |
-| ⬜ **Falta** | Razón social (texto embebido), detección del QR en el cliente, OCR de respaldo, export CSV, frontend, autenticación, y toda la Fase 2 (cola, worker, Redis, outbox) |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, `POST /documents` y `GET /jobs/:id`, razón social desde el texto del PDF, stack dockerizado, 192 tests, CI |
+| ⬜ **Falta** | Detección del QR en el cliente, OCR de respaldo, export CSV, frontend, autenticación, y toda la Fase 2 (cola, worker, Redis, outbox) |
 
 Lo que el resto de este documento describe es la **arquitectura final**,
 no el estado de avance. El roadmap de la [sección 11](#11-roadmap-y-estimación-de-tiempo)
@@ -441,7 +441,7 @@ https://www.arca.gob.ar/fe/qr/?p={JSON en Base64}
  "nroDocRec":20000000001,"tipoCodAut":"E","codAut":70417054367476}
 ```
 
-Eso significa que **los campos más críticos del MVP no necesitan OCR**: salen exactos, sin ambigüedad y sin score de confianza inventado. El OCR queda para lo que el QR no trae — razón social, neto e IVA.
+Eso significa que **los campos más críticos del MVP no necesitan OCR**: salen exactos, sin ambigüedad y sin score de confianza inventado. Lo único que el QR no trae y v1 sí necesita es la **razón social**, y en un PDF con texto la resuelve PDFBox sin OCR. El OCR queda para los comprobantes sin texto embebido.
 
 > **[ADR 004 — QR primero, OCR de último recurso](docs/adr/004-qr-primero-ocr-de-respaldo.md).** La decisión técnica más importante del proyecto, con las dos diferencias que aparecieron entre la especificación de ARCA y lo que ARCA realmente emite.
 
@@ -452,7 +452,7 @@ El worker corre las estrategias en orden de prioridad y **cada campo se queda co
 | # | Estrategia | Librería | Confianza | Qué aporta |
 |---|---|---|---|---|
 | 1 | **QR** | ZXing | 1.0 | fecha, CUIT, punto de venta, tipo, número, importe, moneda, cotización, doc. receptor, CAE |
-| 2 | **Texto embebido** | Apache PDFBox | ~0.9 | razón social, neto, IVA — solo si el PDF trae texto |
+| 2 | **Texto embebido** | Apache PDFBox | 0.9 | razón social y CUIT del emisor — solo si el PDF trae texto |
 | 3 | **OCR** | OpenCV + Tess4J | 0.3 – 0.8 | lo que siga faltando, en fotos y PDFs escaneados |
 
 ```java
@@ -585,7 +585,7 @@ Tesseract con `--psm 6` (bloque uniforme de texto) como modo inicial.
 Componente compartido entre la estrategia de texto embebido y la de OCR — recibe texto plano, no sabe de dónde salió. **No duplicar estas reglas entre estrategias:** es la parte del código que más va a cambiar.
 
 - **`issuer_business_name`:** heurística de posición en las primeras líneas del bloque del emisor.
-- **`net_amount` / `vat_amount`:** etiquetas ("Subtotal", "Neto", "IVA") + regex de montos en formato argentino (`$ 1.234,56`).
+- **`net_amount` / `vat_amount`:** etiquetas ("Subtotal", "Neto", "IVA") + regex de montos en formato argentino (`$ 1.234,56`). **v2** — v1 no los extrae, ver el perfil de usuario objetivo.
 - **`recipient_vat_condition`:** match contra el vocabulario fijo de AFIP ("Responsable Inscripto", "Consumidor Final", "Monotributo"...).
 - **`issuer_cuit` / `issue_date` / `total`:** reglas de respaldo, solo usadas si no hubo QR.
 
@@ -882,9 +882,10 @@ facturas-ar/
 │       ├── ExtractionStrategy.java      # el puerto
 │       ├── ExtractionOrchestrator.java  # cascada + fusión por confianza
 │       ├── qr/                     # ZXing + OpenCV/WeChat, Base64, JSON del QR
-│       ├── pdftext/                # PDFBox
+│       ├── pdftext/                # estrategia sobre el texto embebido
+│       ├── pdf/                    # PDFBox: texto y rasterizado de páginas
 │       ├── ocr/                    # Tess4J, preprocesamiento OpenCV
-│       └── parser/                 # reglas AFIP sobre texto plano
+│       └── parser/                 # reglas AFIP sobre texto plano, compartidas con el OCR
 │
 ├── upload-api-service/             # runnable Spring Boot app
 │   ├── Dockerfile
@@ -974,7 +975,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 |---|---|
 | ✅ 1 | Setup monorepo, entidades JPA + Flyway, `shared-domain` con los value objects (`Cuit` con dígito verificador, `Importe`) |
 | ✅ 2 | Upload endpoint + almacenamiento S3, **estrategia QR** (ZXing; el motor de OpenCV se agregó después de medir, [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)) |
-| ⬜ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo: razón social, neto, IVA |
+| ✅ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo de la **razón social**. Neto e IVA quedan afuera: son v2, por la decisión de perfil de usuario |
 | ⬜ 4 | Frontend mínimo: upload + **detección del QR en vivo con la cámara** + formulario con origen por campo + historial, auth básica |
 | ⬜ 5 | Export CSV con formato Excel-AR; Tess4J + OpenCV para comprobantes **sin** QR |
 | ⬜ 6 (buffer) | Timebox de medio día al decodificado por mosaicos en el servidor, pulido |

@@ -2,6 +2,7 @@ package ar.facturas.upload.config;
 
 import ar.facturas.extraction.ExtractionOrchestrator;
 import ar.facturas.extraction.ExtractionStrategy;
+import ar.facturas.extraction.pdftext.PdfTextExtractionStrategy;
 import ar.facturas.extraction.qr.QrExtractionStrategy;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -26,13 +27,18 @@ public class ExtractionConfig {
         return new QrExtractionStrategy();
     }
 
+    @Bean
+    PdfTextExtractionStrategy pdfTextExtractionStrategy() {
+        return new PdfTextExtractionStrategy();
+    }
+
     /**
      * Takes every registered strategy. The orchestrator sorts them by
      * the priority of their source, so the order here does not matter
      * and cannot be got wrong.
      *
-     * <p>Only the QR strategy exists today. PDF text and OCR join the
-     * list as they are written, and nothing else has to change.
+     * <p>The QR and the PDF's embedded text are registered. OCR joins
+     * the list when it is written, and nothing else has to change.
      */
     @Bean
     ExtractionOrchestrator extractionOrchestrator(List<ExtractionStrategy> strategies) {
