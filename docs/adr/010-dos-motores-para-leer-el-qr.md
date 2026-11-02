@@ -142,11 +142,18 @@ Detalles que la implementación fija, cada uno con su test:
 se cuentan solo las lecturas con datos aprovechables. Las dos que quedan
 afuera son el mismo emisor imprimiendo mal.
 
-**La imagen adelgaza.** El jar ejecutable baja de 208 MB a ~166 MB, y la
-porción de OpenCV de ~104 MB a ~63 MB. Suena al revés de lo esperado al
-agregar una dependencia nativa, y la razón es que openpnp empaqueta los
-binarios de **todas** las plataformas en un único jar sin forma de pedir
-una sola. En Linux pesa todavía menos que esa cifra, medida en Windows.
+**La imagen adelgaza.** El jar que produce la imagen —compilado en
+Linux, con los binarios de una sola plataforma— baja de **208 MB a
+~149 MB**, y la porción de OpenCV de **~104 MB a ~46 MB**. Suena al revés
+de lo esperado al agregar una dependencia nativa, y la razón es que
+openpnp empaqueta los binarios de **todas** las plataformas en un único
+jar sin forma de pedir una sola.
+
+El precio lo paga la máquina de desarrollo, no la imagen: compilado en
+Windows el jar da 210 MB, porque lleva los binarios de Linux —que van
+incondicionales— además de los propios. Son 61 MB que nunca se ejecutan
+ahí. Se eligió así a conciencia: ver el punto de los binarios más
+arriba.
 
 **Al ADR 009 se le cae la premisa, no la decisión.** Detectar el QR en el
 navegador sigue valiendo: el feedback inmediato convierte un fracaso que
@@ -166,15 +173,18 @@ fotos de tres emisores no son base para escribir un porcentaje en un
 criterio de aceptación. Ese fue exactamente el error original. Vuelve a
 escribirse cuando haya una muestra que lo sostenga.
 
-**Aparece un costo operativo nuevo que todavía no está resuelto.**
+**El arranque del nativo es un problema de Windows, no de producción.**
 `Loader.load` de JavaCPP tarda **~20 s en Windows, en cada arranque de la
-JVM** (no es caché fría: se midió en caliente, y el log de debug muestra
-que el tiempo se va cargando openblas y una pila de DLLs del UCRT). Con
-openblas excluido OpenCV directamente no carga, así que no se puede
-evitar por ahí. **Falta medirlo en Linux**, que es lo que corre en
-producción, y recién con ese número se decide si hace falta precalentar
-el nativo al arranque de la aplicación. Escribir el precalentamiento
-antes de medir sería repetir el error que originó este ADR.
+JVM** — no es caché fría: se midió en caliente, y el log de debug muestra
+el tiempo yéndose en openblas y una pila de DLLs del UCRT. Excluir
+openblas no es salida: sin él OpenCV no carga.
+
+En Linux, que es lo que corre en producción, **la clase entera de tests
+que dispara la carga tarda 2,17 s**, con los per-método sumando ~1,4 s.
+O sea menos de un segundo de carga, contra veinte. **No se precalienta
+nada**, que era la pregunta abierta. Y se deja escrito el número para que
+nadie lo vuelva a estimar: la molestia es real al correr los tests en
+Windows y no significa nada sobre el servidor.
 
 **`WeChatQrEngine.available()` tiene que llegar a las métricas.** Si el
 nativo no carga, no se rompe nada ni se lanza nada: las fotos

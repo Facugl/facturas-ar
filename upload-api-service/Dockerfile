@@ -49,9 +49,9 @@ RUN ./mvnw -B -q clean package -DskipTests
 #  Etapa 2 — separar el jar en capas
 # ──────────────────────────────────────────────────────────────────────
 #
-# Un jar ejecutable de Spring Boot es un solo archivo de ~166 MB, de los
-# cuales ~63 MB son OpenCV y sus binarios. Copiado entero, cada cambio de
-# una línea de código reescribe los 166 MB.
+# Un jar ejecutable de Spring Boot es un solo archivo de ~149 MB, de los
+# cuales ~46 MB son OpenCV y sus binarios. Copiado entero, cada cambio de
+# una línea de código reescribe los 149 MB.
 #
 # Pesaba 208 MB hasta que OpenCV pasó de openpnp a bytedeco (ADR 010):
 # openpnp empaqueta los binarios de todas las plataformas en un solo jar

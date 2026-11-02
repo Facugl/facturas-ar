@@ -707,7 +707,7 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 
 ### Infraestructura local
 - Docker Compose. Hoy levanta lo que el código usa: **Postgres 16**, **Adobe S3Mock** y la propia API. RabbitMQ, Redis, Prometheus y Grafana entran en las Fases 2 y 3.
-- La API se construye con un **Dockerfile multi-stage** que parte el jar en capas (`jarmode=tools extract --layers`). Importa: el jar pesa 208 MB y copiarlo entero reescribía todo ante cualquier cambio; partido, la capa de código propio pesa 143 kB.
+- La API se construye con un **Dockerfile multi-stage** que parte el jar en capas (`jarmode=tools extract --layers`). Importa: el jar pesa ~149 MB y copiarlo entero reescribía todo ante cualquier cambio; partido, la capa de código propio pesa 143 kB.
 - GitHub Actions: `./mvnw verify` y build de la imagen en cada push y PR a main
 
 > **Por qué S3Mock y no MinIO.** El plan original era MinIO, pero sus imágenes dejaron de ser públicas: tanto Docker Hub como quay.io piden login. La segunda opción, LocalStack, ahora exige `LOCALSTACK_AUTH_TOKEN` y sale con error sin él. S3Mock es Apache 2.0 y arranca sin credenciales ni registro.
@@ -977,7 +977,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | ⬜ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo: razón social, neto, IVA |
 | ⬜ 4 | Frontend mínimo: upload + **detección del QR en vivo con la cámara** + formulario con origen por campo + historial, auth básica |
 | ⬜ 5 | Export CSV con formato Excel-AR; Tess4J + OpenCV para comprobantes **sin** QR |
-| ⬜ 6 (buffer) | Medir en Linux el arranque del nativo de OpenCV y decidir si hay que precalentarlo; timebox de medio día al decodificado por mosaicos, pulido |
+| ⬜ 6 (buffer) | Timebox de medio día al decodificado por mosaicos en el servidor, pulido |
 
 > **El orden cambió respecto de la versión anterior de este roadmap, y es importante:** la estrategia QR va primero porque con ella sola ya existe un sistema que extrae datos correctos de una factura real. El OCR, que antes ocupaba la semana 3 entera, baja a la semana 5. Se entrega valor demostrable tres semanas antes.
 >
