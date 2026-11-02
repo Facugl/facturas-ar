@@ -37,7 +37,14 @@
     <zxing.version>3.5.3</zxing.version>
     <pdfbox.version>3.0.7</pdfbox.version>
     <tess4j.version>5.16.0</tess4j.version>
-    <opencv.version>4.9.0-0</opencv.version>
+    <!--
+      OpenCV viene de bytedeco y no de openpnp porque bytedeco compila
+      con opencv_contrib, que es donde vive el detector de QR de WeChat.
+      El build de openpnp es solo el core y no lo trae. Ver ADR 010.
+    -->
+    <opencv.version>4.10.0-1.5.11</opencv.version>
+    <javacpp.version>1.5.11</javacpp.version>
+    <openblas.version>0.3.28-1.5.11</openblas.version>
     <awssdk.version>2.46.7</awssdk.version>
   </properties>
 
@@ -102,10 +109,30 @@
         <artifactId>tess4j</artifactId>
         <version>${tess4j.version}</version>
       </dependency>
+      <!--
+        Las clases Java de OpenCV. Los binarios no vienen con este
+        artefacto: se piden aparte, por classifier, en extraction/pom.xml.
+
+        Se descarto `opencv-platform`, que es el meta-artefacto que los
+        junta todos. La documentacion de bytedeco dice que la propiedad
+        `javacpp.platform` lo acota a una sola plataforma; se probo y no
+        lo hace cuando la propiedad se hereda de un pom padre:
+        `dependency:tree` seguia resolviendo las diez. Pedir el
+        classifier a mano es mas largo de leer pero no depende de que un
+        perfil ajeno se active.
+
+        numpy queda afuera: son los bindings de Python de OpenCV.
+      -->
       <dependency>
-        <groupId>org.openpnp</groupId>
+        <groupId>org.bytedeco</groupId>
         <artifactId>opencv</artifactId>
         <version>${opencv.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>numpy</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
 
       <!-- Cliente S3 para MinIO -->
@@ -118,5 +145,82 @@
       </dependency>
     </dependencies>
   </dependencyManagement>
+
+  <!--
+    Que binarios de OpenCV entran al classpath.
+
+    Hace falta elegir porque bytedeco publica un jar de nativos por
+    plataforma y OpenCV no arranca sin el de la suya. Lo que decide que no
+    se incluyan todos no es la descarga: es que todos terminarian DENTRO
+    del jar ejecutable, y la imagen de produccion se llevaria los .dll de
+    Windows y los .dylib de macOS para nada.
+
+    Se activan por SO y no a mano para que nadie tenga que acordarse de
+    pasar un -D al compilar. Agregar una plataforma es agregar un perfil.
+
+    Si compilas en una que no este listada, OpenCV no carga. No es fatal:
+    el lector de QR sigue andando con ZXing y el de WeChat queda inactivo,
+    que es justo lo que fija `reportsWhetherItCanRunAtAll`.
+  -->
+  <profiles>
+    <profile>
+      <id>nativos-linux-x86_64</id>
+      <activation>
+        <os>
+          <family>unix</family>
+          <arch>amd64</arch>
+        </os>
+      </activation>
+      <dependencies>
+        <dependency>
+          <groupId>org.bytedeco</groupId>
+          <artifactId>opencv</artifactId>
+          <version>${opencv.version}</version>
+          <classifier>linux-x86_64</classifier>
+        </dependency>
+        <dependency>
+          <groupId>org.bytedeco</groupId>
+          <artifactId>openblas</artifactId>
+          <version>${openblas.version}</version>
+          <classifier>linux-x86_64</classifier>
+        </dependency>
+        <dependency>
+          <groupId>org.bytedeco</groupId>
+          <artifactId>javacpp</artifactId>
+          <version>${javacpp.version}</version>
+          <classifier>linux-x86_64</classifier>
+        </dependency>
+      </dependencies>
+    </profile>
+    <profile>
+      <id>nativos-windows-x86_64</id>
+      <activation>
+        <os>
+          <family>windows</family>
+          <arch>amd64</arch>
+        </os>
+      </activation>
+      <dependencies>
+        <dependency>
+          <groupId>org.bytedeco</groupId>
+          <artifactId>opencv</artifactId>
+          <version>${opencv.version}</version>
+          <classifier>windows-x86_64</classifier>
+        </dependency>
+        <dependency>
+          <groupId>org.bytedeco</groupId>
+          <artifactId>openblas</artifactId>
+          <version>${openblas.version}</version>
+          <classifier>windows-x86_64</classifier>
+        </dependency>
+        <dependency>
+          <groupId>org.bytedeco</groupId>
+          <artifactId>javacpp</artifactId>
+          <version>${javacpp.version}</version>
+          <classifier>windows-x86_64</classifier>
+        </dependency>
+      </dependencies>
+    </profile>
+  </profiles>
 
 </project>

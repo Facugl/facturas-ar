@@ -35,7 +35,8 @@ RUN ./mvnw -B -q dependency:go-offline -DexcludeArtifactIds=shared-domain,extrac
 #
 # Se copian los directorios de módulo enteros y no sus src/ porque un
 # módulo recién creado todavía no tiene src/ y `COPY` falla si la ruta no
-# existe. Hoy le pasa a `extraction`, que tiene pom y nada más.
+# existe. Le pasaba a `extraction` cuando era solo un pom; se deja así
+# para que agregar el próximo módulo no vuelva a romper el build.
 COPY shared-domain shared-domain
 COPY extraction extraction
 COPY upload-api-service upload-api-service
@@ -48,9 +49,15 @@ RUN ./mvnw -B -q clean package -DskipTests
 #  Etapa 2 — separar el jar en capas
 # ──────────────────────────────────────────────────────────────────────
 #
-# Un jar ejecutable de Spring Boot es un solo archivo de 208 MB, de los
-# cuales 104 MB son OpenCV. Copiado entero, cada cambio de una línea de
-# código reescribe los 208 MB.
+# Un jar ejecutable de Spring Boot es un solo archivo de ~166 MB, de los
+# cuales ~63 MB son OpenCV y sus binarios. Copiado entero, cada cambio de
+# una línea de código reescribe los 166 MB.
+#
+# Pesaba 208 MB hasta que OpenCV pasó de openpnp a bytedeco (ADR 010):
+# openpnp empaqueta los binarios de todas las plataformas en un solo jar
+# y no hay forma de pedirle una sola, así que la imagen de Linux cargaba
+# también con los de Windows y macOS. Acá se compila en Linux, y los
+# perfiles del pom padre dejan entrar únicamente linux-x86_64.
 #
 # `jarmode=tools extract --layers` lo parte en cuatro capas ordenadas de
 # menos a más volátil, y Docker cachea cada una por separado: cambiar

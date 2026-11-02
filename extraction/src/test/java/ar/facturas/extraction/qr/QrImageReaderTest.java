@@ -18,7 +18,9 @@ import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -34,6 +36,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>What this does <em>not</em> prove is that we can read an actual
  * printed comprobante. Only a real one does that, and it is a separate
  * test.
+ *
+ * <p>These go through {@link QrImageReader}, which is the facade over two
+ * engines. Every code here is clean enough that ZXing reads it first and
+ * the OpenCV engine is never reached; {@link WeChatQrEngineTest} covers
+ * the images where that stops being true.
  */
 class QrImageReaderTest {
 
@@ -190,10 +197,61 @@ class QrImageReaderTest {
 
     @Test
     void readsTheSameImageTwiceInARow() {
-        // The ZXing reader keeps state between calls; without a reset it
-        // returns stale results.
+        // Both engines allocate their decoder per attempt. ZXing's reader
+        // and OpenCV's detector each keep state between calls and hand
+        // back a stale result when reused, so this would fail if either
+        // were held in a field.
         BufferedImage image = qrImage(arcaQrText(), 300);
 
         assertThat(reader.read(image)).isEqualTo(reader.read(image));
+    }
+
+    /**
+     * The three tests below use stub engines rather than images, because
+     * what they are about is the order, not the decoding.
+     */
+    @Test
+    void fallsThroughToTheNextEngineWhenTheFirstFindsNothing() {
+        var found = new QrImageReader(List.of(silent(), reads("el segundo lo leyo")));
+
+        assertThat(found.read(qrImage("cualquier cosa", 200)))
+                .contains("el segundo lo leyo");
+    }
+
+    @Test
+    void stopsAtTheFirstEngineThatReads() {
+        var counting = new int[]{0};
+        QrEngine shouldNotRun = image -> {
+            counting[0]++;
+            return Optional.empty();
+        };
+        var reader = new QrImageReader(List.of(reads("el primero alcanzo"), shouldNotRun));
+
+        assertThat(reader.read(qrImage("cualquier cosa", 200)))
+                .contains("el primero alcanzo");
+        assertThat(counting[0]).isZero();
+    }
+
+    /**
+     * The whole point of carrying two engines: the reader still works when
+     * one of them cannot run at all, which is what happens to the OpenCV
+     * engine on a platform the build packaged no native library for.
+     */
+    @Test
+    void stillReadsWhenOneEngineIsEntirelyUnavailable() {
+        var reader = new QrImageReader(List.of(silent(), silent()));
+
+        assertThat(reader.read(qrImage(arcaQrText(), 300))).isEmpty();
+        assertThat(new QrImageReader(List.of(silent(), new ZxingQrEngine()))
+                .read(qrImage(arcaQrText(), 300)))
+                .contains(arcaQrText());
+    }
+
+    private static QrEngine silent() {
+        return image -> Optional.empty();
+    }
+
+    private static QrEngine reads(String text) {
+        return image -> Optional.of(text);
     }
 }

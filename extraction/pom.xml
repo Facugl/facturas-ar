@@ -31,7 +31,14 @@
       <artifactId>shared-domain</artifactId>
     </dependency>
 
-    <!-- Estrategia 1: el QR de ARCA -->
+    <!--
+      Estrategia 1: el QR de ARCA.
+
+      Dos lectores, no uno. ZXing es Java puro y resuelve el PDF
+      rasterizado; el detector de WeChat de OpenCV es el que lee las
+      fotos, y medido sobre comprobantes reales leyo 4 de 6 donde ZXing
+      leyo 1. Por que hay dos y no solo el segundo: ADR 010.
+    -->
     <dependency>
       <groupId>com.google.zxing</groupId>
       <artifactId>core</artifactId>
@@ -39,6 +46,10 @@
     <dependency>
       <groupId>com.google.zxing</groupId>
       <artifactId>javase</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.bytedeco</groupId>
+      <artifactId>opencv</artifactId>
     </dependency>
 
     <!-- Estrategia 2: texto embebido. También rasteriza la página para buscarle el QR -->
@@ -51,10 +62,6 @@
     <dependency>
       <groupId>net.sourceforge.tess4j</groupId>
       <artifactId>tess4j</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.openpnp</groupId>
-      <artifactId>opencv</artifactId>
     </dependency>
 
     <!-- Parseo del JSON que viene dentro del QR -->
