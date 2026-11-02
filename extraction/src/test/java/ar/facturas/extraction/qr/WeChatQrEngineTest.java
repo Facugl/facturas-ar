@@ -44,8 +44,9 @@ class WeChatQrEngineTest {
      * Whether the build packaged a native library for the machine running
      * this.
      *
-     * <p>The parent pom ships linux-x86_64 and windows-x86_64 and nothing
-     * else, so anywhere else this engine is legitimately inert.
+     * <p>The extraction module ships linux-x86_64 unconditionally and
+     * windows-x86_64 under a profile, so anywhere else this engine is
+     * legitimately inert.
      */
     private static boolean platformHasANativeLibrary() {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
@@ -69,7 +70,15 @@ class WeChatQrEngineTest {
     @Test
     @DisplayName("the native library loads exactly where the build packages one")
     void reportsWhetherItCanRunAtAll() {
-        assertThat(WeChatQrEngine.available()).isEqualTo(platformHasANativeLibrary());
+        // The description carries the reason, because a bare `expected
+        // true but was false` on a CI runner says nothing about whether
+        // the native jar was missing or present-but-unlinkable.
+        assertThat(WeChatQrEngine.available())
+                .as("OpenCV on %s/%s, reason if it did not load: %s",
+                        System.getProperty("os.name"),
+                        System.getProperty("os.arch"),
+                        WeChatQrEngine.unavailableReason())
+                .isEqualTo(platformHasANativeLibrary());
     }
 
     @Test

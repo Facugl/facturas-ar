@@ -99,10 +99,15 @@ Detalles que la implementación fija, cada uno con su test:
   modelos Caffe —un detector CNN y un paso de superresolución—. El 4 de 6
   se midió con el constructor sin argumentos, o sea sin ninguno de los
   dos. Agregarlos es un experimento posterior, no un requisito.
-- **Los binarios se eligen por plataforma, con perfiles del pom padre.**
-  Hoy `linux-x86_64` y `windows-x86_64`. No es por la descarga: es que
-  todos terminarían dentro del jar ejecutable y la imagen de producción
-  se llevaría los `.dll` de Windows.
+- **Los binarios se eligen por plataforma, y no de manera simétrica.**
+  `linux-x86_64` va **incondicional**; `windows-x86_64` cuelga de un
+  perfil activado por SO. No se incluyen todos porque terminarían dentro
+  del jar ejecutable y la imagen de producción se llevaría los `.dll` de
+  Windows. Y Linux no cuelga de un perfil porque la primera versión de
+  esto sí lo hacía y el CI se construyó sin binario: OpenCV no cargó, las
+  fotos dejaron de leerse y lo único que lo delató fue el test que
+  compara contra la plataforma. Que la imagen de producción tenga su
+  binario no puede depender de que un `<activation>` se dispare.
 - **Un detector por llamada, no un campo.** El objeto nativo guarda
   estado y esto cuelga de un singleton detrás de un handler web.
   `ZxingQrEngine` se cambió igual, lo que además elimina el `reset()`

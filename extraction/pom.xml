@@ -52,6 +52,39 @@
       <artifactId>opencv</artifactId>
     </dependency>
 
+    <!--
+      Los binarios de OpenCV para Linux, sin perfil que los condicione.
+
+      Van incondicionales a propósito. Antes colgaban de un perfil
+      activado por SO y el CI de Linux se construyó sin ellos: OpenCV no
+      cargó, las fotos dejaron de leerse y lo único que lo delató fue el
+      test que compara contra la plataforma. Que la imagen de producción
+      tenga su binario no puede depender de que un `<activation>` se
+      dispare.
+
+      El precio es que quien compile en Windows se baja ~44 MB de
+      binarios de Linux que no va a usar. Barato al lado de descubrir en
+      producción que el lector de fotos quedó inerte.
+    -->
+    <dependency>
+      <groupId>org.bytedeco</groupId>
+      <artifactId>opencv</artifactId>
+      <version>${opencv.version}</version>
+      <classifier>linux-x86_64</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.bytedeco</groupId>
+      <artifactId>openblas</artifactId>
+      <version>${openblas.version}</version>
+      <classifier>linux-x86_64</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.bytedeco</groupId>
+      <artifactId>javacpp</artifactId>
+      <version>${javacpp.version}</version>
+      <classifier>linux-x86_64</classifier>
+    </dependency>
+
     <!-- Estrategia 2: texto embebido. También rasteriza la página para buscarle el QR -->
     <dependency>
       <groupId>org.apache.pdfbox</groupId>
@@ -81,5 +114,50 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <!--
+    Los binarios para desarrollar en Windows.
+
+    Este sí va en un perfil, y la diferencia con el bloque de Linux de
+    arriba es deliberada: que la máquina de desarrollo tenga su binario
+    es una comodidad, que lo tenga la imagen de producción es un
+    requisito. Si este perfil no se activa, los tests de
+    `WeChatQrEngineTest` se saltean y `reportsWhetherItCanRunAtAll` lo
+    dice; si fallara el de Linux, se rompe el CI.
+
+    Agregar una plataforma —macOS, arm64— es agregar un perfil igual a
+    este con el classifier que corresponda.
+  -->
+  <profiles>
+    <profile>
+      <id>nativos-windows-x86_64</id>
+      <activation>
+        <os>
+          <family>windows</family>
+          <arch>amd64</arch>
+        </os>
+      </activation>
+      <dependencies>
+        <dependency>
+          <groupId>org.bytedeco</groupId>
+          <artifactId>opencv</artifactId>
+          <version>${opencv.version}</version>
+          <classifier>windows-x86_64</classifier>
+        </dependency>
+        <dependency>
+          <groupId>org.bytedeco</groupId>
+          <artifactId>openblas</artifactId>
+          <version>${openblas.version}</version>
+          <classifier>windows-x86_64</classifier>
+        </dependency>
+        <dependency>
+          <groupId>org.bytedeco</groupId>
+          <artifactId>javacpp</artifactId>
+          <version>${javacpp.version}</version>
+          <classifier>windows-x86_64</classifier>
+        </dependency>
+      </dependencies>
+    </profile>
+  </profiles>
 
 </project>

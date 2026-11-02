@@ -56,8 +56,9 @@ RUN ./mvnw -B -q clean package -DskipTests
 # Pesaba 208 MB hasta que OpenCV pasó de openpnp a bytedeco (ADR 010):
 # openpnp empaqueta los binarios de todas las plataformas en un solo jar
 # y no hay forma de pedirle una sola, así que la imagen de Linux cargaba
-# también con los de Windows y macOS. Acá se compila en Linux, y los
-# perfiles del pom padre dejan entrar únicamente linux-x86_64.
+# también con los de Windows y macOS. Acá se compila en Linux, donde
+# entran los binarios de linux-x86_64 —que extraction declara siempre— y
+# no los de Windows, que cuelgan de un perfil que acá no se activa.
 #
 # `jarmode=tools extract --layers` lo parte en cuatro capas ordenadas de
 # menos a más volátil, y Docker cachea cada una por separado: cambiar

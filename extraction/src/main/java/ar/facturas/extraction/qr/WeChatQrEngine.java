@@ -32,38 +32,55 @@ import java.util.Optional;
 final class WeChatQrEngine implements QrEngine {
 
     /**
-     * Whether OpenCV's native library actually loaded.
+     * Why OpenCV's native library did not load, or null when it did.
      *
-     * <p>Resolved once, at class load. It is false when the build
-     * produced no native for this platform — only linux-x86_64 and
-     * windows-x86_64 are packaged, see the profiles in the parent pom —
-     * and that is a deliberate build-time choice rather than a fault, so
-     * it must not take the process down. The cost of it being false is
-     * that photographs stop reading and {@link ZxingQrEngine} is all
-     * that is left, which is a large, silent drop in coverage: ADR 010
-     * commits to surfacing it as a metric when observability is wired.
+     * <p>Resolved once, at class load. Two things can put a reason in
+     * here, and they need different fixes: the build packaged no native
+     * for this platform, which is a build-time choice rather than a
+     * fault, or the native is on the classpath but will not link against
+     * the system it found. Neither may take the process down, so the
+     * reason is recorded instead of thrown.
+     *
+     * <p>The cost of it being set is that photographs stop reading and
+     * {@link ZxingQrEngine} is all that is left, which on the measured
+     * sample is a drop from four comprobantes in six to one. Silent, if
+     * nobody looks — so ADR 010 commits to surfacing this as a metric
+     * when observability is wired, and
+     * {@code WeChatQrEngineTest.reportsWhetherItCanRunAtAll} fails loudly
+     * in the meantime.
      */
-    private static final boolean AVAILABLE = loadNative();
+    private static final String UNAVAILABLE_REASON = loadNative();
 
-    private static boolean loadNative() {
+    /** Null when the library loaded; otherwise why it did not. */
+    private static String loadNative() {
         try {
             Loader.load(opencv_java.class);
-            return true;
+            return null;
         } catch (Throwable t) {
             // Throwable and not Exception: a missing native surfaces as
-            // UnsatisfiedLinkError, which is an Error.
-            return false;
+            // UnsatisfiedLinkError, which is an Error. The reason is kept
+            // rather than discarded because the two causes need different
+            // fixes — no native jar for this platform is a build problem,
+            // a native that is there but will not link is a system
+            // problem — and swallowing it silently is the exact failure
+            // mode this class is supposed to make loud.
+            return t.getClass().getSimpleName() + ": " + t.getMessage();
         }
     }
 
-    /** False when OpenCV's native library is not on this platform's classpath. */
+    /** False when OpenCV's native library is not usable on this machine. */
     static boolean available() {
-        return AVAILABLE;
+        return UNAVAILABLE_REASON == null;
+    }
+
+    /** Null when {@link #available()} is true. For diagnostics and metrics. */
+    static String unavailableReason() {
+        return UNAVAILABLE_REASON;
     }
 
     @Override
     public Optional<String> read(BufferedImage image) {
-        if (!AVAILABLE || image == null) {
+        if (UNAVAILABLE_REASON != null || image == null) {
             return Optional.empty();
         }
         Mat gray = toGrayscaleMat(image);
