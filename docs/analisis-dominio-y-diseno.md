@@ -51,7 +51,7 @@ Esto no debilita el proyecto: **lo mejora**. Un sistema que hace "OCR a todo" es
 2. **La precisión del MVP deja de depender de Tesseract.** El criterio de aceptación "70% de campos clave correctos" pasa a ser ~100% en comprobantes con QR legible, y el riesgo se concentra en razón social e IVA desagregado.
 3. **La validación contra ARCA deja de ser "v2".** Con el CAE, CUIT, tipo, punto de venta, número, fecha e importe en la mano, constatar el comprobante es una llamada más. Pasa de ser una feature cara a ser casi gratis.
 4. **Aparece una verificación cruzada potente.** Si el OCR lee un total de $ 12.100 y el QR dice `importe: 12100`, coinciden → confianza alta. Si no coinciden, el QR gana y se marca la discrepancia. Eso es una señal de calidad real, no un score inventado.
-5. **El preprocesamiento de imagen cambia de objetivo.** Deskew y binarización dejan de ser "para que Tesseract lea mejor" y pasan a ser, en primer lugar, "para que el detector de QR encuentre el código". ZXing es bastante tolerante, pero una foto torcida con sombra le cuesta.
+5. **El preprocesamiento de imagen cambia de objetivo.** Deskew y binarización dejan de ser "para que Tesseract lea mejor" y pasan a ser, en primer lugar, "para que el detector de QR encuentre el código". ZXing es bastante tolerante, pero una foto torcida con sombra le cuesta. *(Matizado por el [ADR 010](adr/010-dos-motores-para-leer-el-qr.md): lo que más movió la aguja en fotos reales no fue preprocesar mejor sino cambiar de decodificador — catorce variantes de preprocesado no rescataron ninguna foto que el detector nuevo no leyera igual sin ellas.)*
 
 > **ADR a escribir:** `004-qr-first-ocr-fallback.md`. Es el ADR más valioso del proyecto.
 >
@@ -61,6 +61,11 @@ Esto no debilita el proyecto: **lo mejora**. Un sistema que hace "OCR a todo" es
 > leer el QR**, y ahí 0 de 8 fotos reales fallaron. El punto (5) también
 > prometía demasiado — el preprocesamiento recupera contraste, no
 > píxeles. Ver [ADR 009](adr/009-deteccion-del-qr-en-el-cliente.md).
+>
+> **Y el párrafo de arriba también erró, un día después.** "Que la cámara
+> pueda leer el QR" no era el riesgo: era **que el lector pueda leerlo**.
+> Cambiando de decodificador, cuatro de esas fotos entregan datos. Ver
+> [ADR 010](adr/010-dos-motores-para-leer-el-qr.md).
 
 ---
 
@@ -268,7 +273,9 @@ Este es el corazón del proyecto. El flujo en cascada:
 
 4. ── Estrategia QR  (confianza 1.0) ───────────────────
      Renderizar la primera página a imagen si es PDF
-     Buscar QR con ZXing (probar rotaciones 0/90/180/270)
+     Buscar QR: ZXing primero (Java puro), si no lo encuentra
+       el detector de WeChat de OpenCV (ADR 010)
+       — sin probar rotaciones: el formato ya las resuelve
      ¿Encontrado?
        → parsear la URL, tomar el parámetro p
        → decodificar Base64 → JSON → validar contra el schema v1
@@ -424,7 +431,7 @@ El QR hace que "perfecto" sea alcanzable para el caso principal. Aprovechalo: ac
 Reemplazan a los del README, que estaban calibrados para un mundo sin QR.
 
 1. Un PDF de factura electrónica con QR legible → los 7 campos del QR correctos, **100%** de los casos de un set de al menos 20 comprobantes reales variados.
-2. Una **foto de celular**: el QR se detecta en el navegador, antes de subir, y la foto se acepta solo si decodificó. ~~QR detectado en ≥ 85% de los casos.~~ **Este criterio se midió y se cayó:** 0 de 8 fotos reales entregaron datos, cuatro de ellas primeros planos. Ver [ADR 009](adr/009-deteccion-del-qr-en-el-cliente.md).
+2. Una **foto de celular**: el QR se lee en el servidor con dos decodificadores, y el navegador además lo intenta en vivo para que el usuario corrija el encuadre antes de subir. ~~QR detectado en ≥ 85% de los casos.~~ **Este criterio se midió dos veces y las dos cambiaron algo.** Con el lector original: 0 de 8 fotos entregaron datos, cuatro de ellas primeros planos ([ADR 009](adr/009-deteccion-del-qr-en-el-cliente.md)). Contra cuatro decodificadores: el detector de WeChat de OpenCV lee 4 de 6 donde ZXing leía 1, así que el techo no era la foto ([ADR 010](adr/010-dos-motores-para-leer-el-qr.md)). **El 85% sigue sin reponerse:** sobre la muestra nueva da 67%, y seis fotos de tres emisores no alcanzan para escribir un porcentaje en un criterio de aceptación.
 3. Un comprobante **sin** QR → degrada a OCR, no se rompe, el usuario puede completar a mano.
 4. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción.
 5. El CSV abre en Excel con montos numéricos y acentos correctos, sin intervención.
@@ -568,7 +575,8 @@ El del README está bien elegido. Los cambios:
 
 | Qué | Para qué |
 |---|---|
-| **ZXing** (`com.google.zxing:core` + `javase`) | Detección y decodificación del QR. **La dependencia más importante del proyecto** |
+| **ZXing** (`com.google.zxing:core` + `javase`) | Lectura del QR en PDF rasterizado y escaneos limpios |
+| **OpenCV** (`org.bytedeco:opencv`, con `opencv_contrib`) | El detector de QR de WeChat, que es el que lee las fotos, más el preprocesamiento del OCR. **Junto con ZXing, la dependencia más importante del proyecto** ([ADR 010](adr/010-dos-motores-para-leer-el-qr.md)) |
 | **Apache PDFBox** `PDFRenderer` | Ya está en el stack para texto; se usa también para rasterizar la página y buscarle el QR |
 | **Jackson** | Parsear el JSON del QR. Ya viene con Spring Boot |
 | **Testcontainers** | Postgres, RabbitMQ y el almacenamiento de objetos reales en los tests de integración. Para un proyecto cuyo argumento es "sé manejar infraestructura asíncrona", testear contra H2 y mocks contradice el argumento |
@@ -576,7 +584,7 @@ El del README está bien elegido. Los cambios:
 
 **Reconsiderar:**
 
-- **OpenCV** (`org.openpnp:opencv`) pasa de crítico a secundario: sirve para mejorar la detección del QR y para el OCR de fallback. Si da problemas de portabilidad, **no bloquea el MVP**. Antes sí lo hacía.
+- ~~**OpenCV** (`org.openpnp:opencv`) pasa de crítico a secundario: sirve para mejorar la detección del QR y para el OCR de fallback. Si da problemas de portabilidad, **no bloquea el MVP**. Antes sí lo hacía.~~ **Volvió a ser crítico, y es otro artefacto.** El [ADR 010](adr/010-dos-motores-para-leer-el-qr.md) lo pone en el camino principal: sin OpenCV, las fotos se leen en 1 de 6 en vez de 4 de 6. Y viene de `org.bytedeco:opencv` porque el build de openpnp es solo el core y no trae `opencv_contrib`, donde vive el detector de WeChat.
 - **Tesseract** baja de "motor del sistema" a "estrategia de último recurso". Instalá `tesseract-ocr-spa` igual, pero no le dediques la semana 3 entera.
 
 **Sin cambios y bien elegido:** Java 21, Postgres 16, Flyway, RabbitMQ, Redis, almacenamiento S3-compatible, Micrometer + Prometheus + Grafana, React + Vite, Docker Compose, GitHub Actions.
@@ -589,7 +597,7 @@ Las métricas del README son genéricas. Estas cuentan la historia del dominio:
 
 | Métrica | Tipo | Por qué |
 |---|---|---|
-| `invoice.qr.detection.rate` | Counter con tags `detected`, `source` | **La métrica más importante del sistema.** Es el indicador de salud del pipeline entero. El tag `source` (`client`/`server`/`none`) es obligatorio desde el [ADR 009](adr/009-deteccion-del-qr-en-el-cliente.md): un sistema donde el 90% de los QR los lee el cliente está sano, y el promedio de los dos no dice nada |
+| `invoice.qr.detection.rate` | Counter con tags `detected`, `source`, `engine` | **La métrica más importante del sistema.** Es el indicador de salud del pipeline entero. El tag `source` (`client`/`server`/`none`) es obligatorio desde el [ADR 009](adr/009-deteccion-del-qr-en-el-cliente.md): un sistema donde el 90% de los QR los lee el cliente está sano, y el promedio de los dos no dice nada. El tag `engine` (`zxing`/`wechat`/`unavailable`) lo pide el [ADR 010](adr/010-dos-motores-para-leer-el-qr.md): si el binario nativo de OpenCV no carga, nada se rompe y nada se lanza — las fotos simplemente dejan de leerse, en silencio |
 | `invoice.extraction.source` | Counter con tags `field`, `source` | Qué proporción de cada campo viene de QR vs OCR. Dice exactamente dónde invertir |
 | `invoice.field.correction.rate` | Counter con tag `field` | Qué campo corrige más el usuario = qué regla de parseo está peor |
 | `invoice.job.processing.time` | Timer con tag `strategy` | Separado por estrategia: el QR debe ser milisegundos, el OCR segundos |
@@ -631,6 +639,8 @@ Cosas que este documento no podía anticipar y se resolvieron al escribir el có
 | **Lombok acotado** | `@Getter`/`@Setter`/`@NoArgsConstructor` sí; `@Data`, `@EqualsAndHashCode` y `@ToString` prohibidos sobre entidades. Ver "Convenciones de código" en el README |
 | **Idioma: dominio en español, técnico y prosa en inglés** | Los términos de ARCA son sustantivos propios; traducirlos da nombres peores y rompe el vínculo con la tabla oficial |
 | **La detección del QR se mueve al cliente** | Medido contra comprobantes reales: los PDF entregan los 12 campos, ninguna de ocho fotos entregó nada. El QR de ARCA es demasiado denso para una foto de papel térmico. Es el supuesto más caro que se cayó en todo el proyecto. Ver [ADR 009](adr/009-deteccion-del-qr-en-el-cliente.md) |
+| **El lector de QR pasa a tener dos motores** | La conclusión de la fila de arriba se había medido con un solo decodificador. Probados cuatro sobre las mismas fotos, el detector de WeChat de OpenCV lee 4 de 6 contra 1 de ZXing, y una de esas lecturas sale a 1,87 píxeles por módulo — por debajo del piso que el 009 daba por insuperable. El parser nunca estuvo roto; era el lector de imagen. Ver [ADR 010](adr/010-dos-motores-para-leer-el-qr.md) |
+| **Lección de las dos filas juntas** | Una medición con una sola herramienta no mide el problema, mide la herramienta. El 009 fue riguroso con los datos y apresurado con la conclusión, que es un error más difícil de ver que no medir |
 
 ### Los ADRs
 
@@ -643,7 +653,8 @@ Escritos. Ver [docs/adr/](adr/):
 | [006](adr/006-dos-servicios-una-base.md) | Por qué dos deployables sobre una DB compartida no son microservicios |
 | [007](adr/007-claim-atomico.md) | Por qué el worker toma el job con un `UPDATE` condicional |
 | [008](adr/008-deduplicacion-en-tres-capas.md) | Por qué la deduplicación necesita tres capas y no una |
-| [009](adr/009-deteccion-del-qr-en-el-cliente.md) | Por qué el QR se detecta en el navegador y no en el servidor — el ADR que corrige al 004 con datos medidos |
+| [009](adr/009-deteccion-del-qr-en-el-cliente.md) | Por qué el QR se detecta en el navegador y no en el servidor — el ADR que corrige al 004 con datos medidos, y al que el 010 le corrige la premisa |
+| [010](adr/010-dos-motores-para-leer-el-qr.md) | Dos motores para leer el QR, y OpenCV para las fotos — qué pasa cuando se mide con más de una herramienta |
 
 ---
 

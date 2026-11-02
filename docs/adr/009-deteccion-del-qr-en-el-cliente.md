@@ -1,8 +1,23 @@
 # 009 — El QR se detecta en el cliente, no en el servidor
 
-**Estado:** aceptada · pendiente (Fase 1, semana 4)
+**Estado:** premisa refutada · la decisión sobrevive con otro peso
 **Fecha:** 2026-11-01
 **Revisa:** [ADR 004](004-qr-primero-ocr-de-respaldo.md)
+**Revisada por:** [ADR 010](010-dos-motores-para-leer-el-qr.md)
+
+> **Leer esto antes que el resto.** Todo lo que sigue se midió con un
+> solo decodificador, ZXing, y de ahí concluyó que al servidor no le
+> quedaba nada por hacer. Al día siguiente se probaron otros tres sobre
+> las mismas fotos: el detector de WeChat de OpenCV leyó **4 de 6** donde
+> ZXing había leído 1, y dos de esas cuatro con el payload ARCA completo.
+>
+> Lo que se cae es el diagnóstico, no la decisión. Detectar el QR en el
+> navegador sigue valiendo por el feedback inmediato, pero es **una
+> mejora de UX** y no "la decisión que salva el producto": ya no
+> justifica mover trabajo de fase. La separación entre `QR` (1.0) y
+> `QR_CLIENT` (0.95) se mantiene intacta.
+>
+> El [ADR 010](010-dos-motores-para-leer-el-qr.md) tiene la medición.
 
 ## Contexto
 
@@ -39,6 +54,13 @@ mismo; lo que cambia es cuánta información hay que meter ahí.
 
 Y el preprocesamiento no lo arregla. El deskew y la binarización
 recuperan contraste, no información que la cámara no captó.
+
+> **Corregido por el [ADR 010](010-dos-motores-para-leer-el-qr.md).** El
+> párrafo de arriba mezcla dos cosas: que no se pueden inventar píxeles
+> —cierto— y que ZXing ya está sacando todo lo que hay en los que sí
+> están —falso—. El detector de WeChat lee dos de estas mismas fotos,
+> una de ellas a 1,87 píxeles por módulo. Las dos del proveedor que no
+> lee nadie fallan por impresión gastada, no por densidad.
 
 > El hallazgo apareció porque el arnés de prueba imprimía solo "falla sin
 > QR legible" y se corrigió para mostrar también las anomalías. Sin eso,
@@ -88,6 +110,11 @@ los campos sobre PDF con QR legible (medido: se cumple), y **la foto se
 acepta solo si el QR se leyó en el cliente**, que es un criterio
 verificable en vez de un porcentaje esperanzado.
 
+> El ADR 010 no reinstala el 85%: sobre la muestra nueva da 67%, y seis
+> fotos de tres emisores no alcanzan para escribir un porcentaje. Pero
+> el servidor ya no es un piso de cero, así que el criterio de la foto
+> deja de ser la única red.
+
 **El OCR deja de ser la respuesta a este problema.** Era tentador decir
 "si la foto no da QR, lo resuelve el OCR en la semana 5". No lo resuelve:
 el papel térmico borroso que no deja leer el QR tampoco deja leer el
@@ -119,9 +146,15 @@ que un dato real ejercita esa rama del diseño.
 binarizadores.** Queda una carta por jugar —cortar la imagen en mosaicos
 y decodificar cada uno, que a veces rescata un QR que se pierde en la
 imagen completa— y vale un timebox de medio día. Pero no cambia el
-diagnóstico: cuando el módulo del QR mide menos de dos píxeles en la
-foto, no hay algoritmo que invente los que faltan. Y aunque funcionara,
+diagnóstico: ~~cuando el módulo del QR mide menos de dos píxeles en la
+foto, no hay algoritmo que invente los que faltan~~. Y aunque funcionara,
 el usuario seguiría enterándose del fracaso después de subir.
+
+> **Esta era la carta, y estaba sin jugar.** La frase tachada se
+> desmintió midiendo: una de estas fotos decodifica a 1,87 px/módulo y
+> un test sintético llega a 1,00. Lo que faltaba no era preprocesar
+> mejor, era probar otro decodificador — lo barato que descarté sin
+> mirarlo. Ver el [ADR 010](010-dos-motores-para-leer-el-qr.md).
 
 **Mover el OCR al frente.** Es mucho trabajo, hereda toda la imprecisión
 del OCR y contradice el ADR 004 por el motivo equivocado: el QR no falló

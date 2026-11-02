@@ -10,7 +10,7 @@
 |---|---|
 | Este README | Qué se construye: alcance, arquitectura, esquema, stack, roadmap |
 | [Análisis de dominio y diseño](docs/analisis-dominio-y-diseno.md) | Por qué el problema es así: perfiles de usuario, competencia, glosario fiscal, casos de uso detallados, patrones justificados y descartados |
-| [Decisiones de arquitectura](docs/adr/) | Los nueve ADRs: por qué cada cosa es así y no de otra forma, con las alternativas que se descartaron |
+| [Decisiones de arquitectura](docs/adr/) | Los diez ADRs: por qué cada cosa es así y no de otra forma, con las alternativas que se descartaron |
 
 ---
 
@@ -21,7 +21,7 @@ los datos del QR de ARCA, de punta a punta.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, `POST /documents` y `GET /jobs/:id`, stack dockerizado, 135 tests, CI |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, `POST /documents` y `GET /jobs/:id`, stack dockerizado, 150 tests, CI |
 | ⬜ **Falta** | Razón social (texto embebido), detección del QR en el cliente, OCR de respaldo, export CSV, frontend, autenticación, y toda la Fase 2 (cola, worker, Redis, outbox) |
 
 Lo que el resto de este documento describe es la **arquitectura final**,
@@ -187,12 +187,15 @@ El orden técnico del roadmap (sync → cola/Redis → observabilidad → pulido
 8. El sistema sobrevive a que el worker se caiga a mitad de un procesamiento: el mensaje se reprocesa y el resultado no se duplica. *(Fase 2 — es el criterio que justifica toda la mensajería.)*
 9. Siempre hay feedback visible de estado ("procesando"), aunque la Fase 1 sea síncrona.
 
-> **El criterio (2) decía "≥ 85% de las fotos" y se cayó al medirlo.** Se
-> midió sobre comprobantes reales y el resultado fue 0 de 8 fotos, cuatro
-> de ellas primeros planos. El QR de ARCA es demasiado denso para
-> sobrevivir a una foto de papel térmico. La historia completa está en
-> [cobertura medida](#cobertura-medida-sobre-comprobantes-reales) y la
-> decisión en el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md).
+> **El criterio (2) decía "≥ 85% de las fotos" y se cayó al medirlo.**
+> Primero contra el lector que había, que leyó 0 de 8 fotos. Después
+> contra otros tres decodificadores, y ahí el diagnóstico cambió: el
+> detector de QR de OpenCV lee 4 de 6 de las mismas fotos donde ZXing
+> leía 1. El cuello no era la foto, era el lector. La historia completa
+> está en [cobertura medida](#cobertura-medida-sobre-comprobantes-reales);
+> las decisiones, en el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md)
+> y su corrección, el [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md).
+> El 85% **no vuelve** hasta que haya una muestra que lo sostenga.
 
 ---
 
@@ -470,15 +473,19 @@ Agregar una estrategia nueva (PaddleOCR en v2, por ejemplo) no toca el orquestad
 
 ### Detección del QR
 
-- ZXing (`com.google.zxing:core` + `javase`), probando las cuatro rotaciones (0/90/180/270).
+- **Dos motores, probados en orden** ([ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)): ZXing (`com.google.zxing:core` + `javase`) para el PDF rasterizado y el escaneo limpio, y el detector de QR que WeChat aportó a OpenCV para las fotos.
+- **Sin probar rotaciones.** El QR lleva tres patrones de posición justamente para que el lector deduzca la orientación; girar la imagen cuatro veces sería cuadruplicar el trabajo para resolver algo que el formato ya resuelve. Hay un test que lo fija.
 - Si hay QR pero el Base64 no decodifica o el JSON no valida contra el schema v1 → se ignora y se sigue por texto/OCR, registrando la anomalía (puede ser un QR falso).
 - **El preprocesamiento de imagen cambia de objetivo:** el deskew y la binarización ahora sirven, en primer lugar, para que ZXing encuentre el código. Que además ayuden a Tesseract es un beneficio secundario.
 
 ### Cobertura medida sobre comprobantes reales
 
 El criterio de aceptación original apostaba a detectar el QR en el **85%
-de las fotos de celular**. Se midió con la estrategia ya implementada
-—`TRY_HARDER` y los dos binarizadores— sobre comprobantes reales:
+de las fotos de celular**. Nadie lo había medido. Al medirlo salieron dos
+conclusiones, y la primera estaba mal.
+
+**Primera medición, con el lector que había** (ZXing, `TRY_HARDER` y los
+dos binarizadores):
 
 | Comprobante | Formato | Resultado |
 |---|---|---|
@@ -492,15 +499,42 @@ de las fotos de celular**. Se midió con la estrategia ya implementada
 **Un PDF entrega el 100% de los campos. Ocho fotos entregaron cero** —
 incluidos cuatro primeros planos sacados apuntando al código.
 
-**El problema es la densidad, no la resolución.** El QR de ARCA codifica
-~268 caracteres, así que necesita una matriz grande; impreso en dos
-centímetros de papel térmico y fotografiado con el papel curvado, no le
-quedan píxeles por módulo para que ZXing resuelva la grilla. La prueba
-está en la factura de luz: su QR de pago, de 55 caracteres, se leyó sin
-problema **en una foto de la misma clase**. El papel es igual de chico;
-lo que cambia es cuánta información hay que meter ahí. Y el
-preprocesamiento no lo arregla: el deskew y la binarización recuperan
-contraste, no información que la cámara nunca captó.
+De ahí salió el diagnóstico de que el problema era la **densidad**: el QR
+de ARCA codifica ~268 caracteres y necesita una matriz de 69×69 módulos,
+que impresa en dos centímetros de papel térmico no deja píxeles por
+módulo suficientes. Y que el preprocesamiento no lo arregla, porque el
+deskew y la binarización recuperan contraste, no información que la
+cámara nunca captó.
+
+Todo eso es cierto salvo la conclusión que le colgué: que entonces no
+quedaba nada por hacer en el servidor. Eso se había medido con **un solo
+decodificador**.
+
+**Segunda medición, contra cuatro decodificadores**, sobre las tres
+facturas que seguían accesibles (en 1200×1600, ya redimensionadas en el
+camino, o sea peores que el original de la cámara):
+
+| Comprobante | ZXing | OpenCV `QRCodeDetector` | `QRCodeDetectorAruco` | **WeChat** |
+|---|---|---|---|---|
+| A, página | ❌ | ❌ | ❌ | ❌ |
+| A, primer plano | ❌ | ❌ | ❌ | ❌ |
+| B, página | ❌ | ❌ | ❌ | ⚠️ payload vacío |
+| B, primer plano | ⚠️ payload vacío | ❌ | ❌ | ⚠️ payload vacío |
+| C, página | ❌ | ❌ | ❌ | ✅ **13 campos** |
+| C, primer plano | ❌ | ✅ | ✅ (a 2×) | ✅ **13 campos** |
+| **total** | **1 de 6** | 1 de 6 | 1 de 6 | **4 de 6** |
+
+**ZXing leyó uno, y es el del payload vacío: cero datos utilizables.
+WeChat leyó cuatro, dos con el payload ARCA completo.** La foto de página
+de C decodificó a **1,87 píxeles por módulo** — por debajo del piso que
+yo había dado por insuperable. El payload recuperado pasó por nuestro
+`ArcaQrDecoder` sin una queja y coincide con lo impreso en el papel: el
+parser nunca estuvo roto, el eslabón flojo era el lector de imagen.
+
+Las dos de A no las lee nadie, pero no por densidad: el primer plano
+tiene el código grande y nítido, con los módulos chorreados unos sobre
+otros y bandas blancas horizontales de una impresora gastada. Catorce
+variantes de preprocesado, ningún detector, nada.
 
 Dos hallazgos más, de los que solo aparecen con papel real:
 
@@ -514,14 +548,19 @@ Dos hallazgos más, de los que solo aparecen con papel real:
   ruido y sigue por la estrategia siguiente, que es justo lo que tiene
   que hacer.
 
-> **La consecuencia: el QR se detecta en el cliente.** El navegador
-> decodifica cuadro a cuadro con la cámara abierta y la foto se acepta
-> solo cuando el QR se leyó, así el usuario corrige el encuadre con la
-> respuesta delante. El servidor sigue decodificando igual y no le cree
-> al cliente: lo que manda el browser entra por el mismo validador y, si
-> el servidor no pudo corroborarlo contra la imagen, queda marcado como
-> `QR_CLIENT` con confianza 0.95 en vez de 1.0.
-> Ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md).
+> **La consecuencia inmediata: se cambió el lector.** El QR pasa por dos
+> motores — ZXing para el PDF rasterizado, el detector de WeChat de
+> OpenCV para las fotos. Ver [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md).
+>
+> **La detección en el cliente sigue en pie, con menos peso.** El
+> navegador decodificando cuadro a cuadro sirve para que el usuario
+> corrija el encuadre con la respuesta delante, en vez de enterarse
+> después de subir. Pero ya no es lo único que separa al producto de no
+> funcionar, así que es una mejora de UX y no justifica mover trabajo de
+> fase. Lo que no cambia: el servidor no le cree al cliente. Lo que manda
+> el browser entra por el mismo validador y, si el servidor no pudo
+> corroborarlo contra la imagen, queda `QR_CLIENT` con confianza 0.95 en
+> vez de 1.0. Ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md).
 >
 > **Y el OCR no era la respuesta a esto.** El papel borroso que no deja
 > leer el QR tampoco deja leer el texto. El OCR queda para lo que siempre
@@ -529,7 +568,7 @@ Dos hallazgos más, de los que solo aparecen con papel real:
 
 ### Preprocesamiento de imagen
 
-Con OpenCV (`org.openpnp:opencv`, o `boofcv` si da problemas de portabilidad):
+Con OpenCV (`org.bytedeco:opencv`, el mismo artefacto que trae el detector de QR):
 
 1. **Escala de grises**
 2. **Corrección de deskew** (transformada de Hough) — el paso de mayor impacto en fotos reales de celular
@@ -612,11 +651,11 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 
 ### Worker de extracción
 - Java 21 + Spring Boot 4.1.1 (módulo separado, Fase 2)
-- **ZXing** (`com.google.zxing:core` + `com.google.zxing:javase`) — detección y decodificación del QR. **La dependencia más importante del proyecto**
+- **ZXing** (`com.google.zxing:core` + `com.google.zxing:javase`) — lectura del QR en PDF rasterizado y escaneos
+- **OpenCV** (`org.bytedeco:opencv`, compilado con `opencv_contrib`) — el detector de QR de WeChat, que es el que lee las fotos, más el preprocesamiento del OCR. **Juntas, la dependencia más importante del proyecto** ([ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md))
 - Apache PDFBox 3.x — texto embebido (`PDFTextStripper`) y rasterizado de la página para buscar el QR (`PDFRenderer`)
 - Jackson — parseo del JSON del QR (ya viene con Spring Boot)
 - Tess4J 5.x (Tesseract 5.3+ en el contenedor: `tesseract-ocr tesseract-ocr-spa`) — estrategia de último recurso
-- `org.openpnp:opencv` (OpenCV 4.x) o `boofcv` como alternativa — preprocesamiento, no bloqueante
 - Parseo de texto: regex + Java puro, sin librería
 - `@RabbitListener` con `acknowledge-mode: manual`
 
@@ -842,7 +881,7 @@ facturas-ar/
 │   └── src/main/java/.../extraction/
 │       ├── ExtractionStrategy.java      # el puerto
 │       ├── ExtractionOrchestrator.java  # cascada + fusión por confianza
-│       ├── qr/                     # ZXing, Base64, JSON del QR
+│       ├── qr/                     # ZXing + OpenCV/WeChat, Base64, JSON del QR
 │       ├── pdftext/                # PDFBox
 │       ├── ocr/                    # Tess4J, preprocesamiento OpenCV
 │       └── parser/                 # reglas AFIP sobre texto plano
@@ -934,15 +973,15 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | Semana | Foco |
 |---|---|
 | ✅ 1 | Setup monorepo, entidades JPA + Flyway, `shared-domain` con los value objects (`Cuit` con dígito verificador, `Importe`) |
-| ✅ 2 | Upload endpoint + almacenamiento S3, **estrategia QR con ZXing** |
+| ✅ 2 | Upload endpoint + almacenamiento S3, **estrategia QR** (ZXing; el motor de OpenCV se agregó después de medir, [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)) |
 | ⬜ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo: razón social, neto, IVA |
 | ⬜ 4 | Frontend mínimo: upload + **detección del QR en vivo con la cámara** + formulario con origen por campo + historial, auth básica |
 | ⬜ 5 | Export CSV con formato Excel-AR; Tess4J + OpenCV para comprobantes **sin** QR |
-| ⬜ 6 (buffer) | Timebox de medio día al decodificado por mosaicos en el servidor, pulido |
+| ⬜ 6 (buffer) | Medir en Linux el arranque del nativo de OpenCV y decidir si hay que precalentarlo; timebox de medio día al decodificado por mosaicos, pulido |
 
 > **El orden cambió respecto de la versión anterior de este roadmap, y es importante:** la estrategia QR va primero porque con ella sola ya existe un sistema que extrae datos correctos de una factura real. El OCR, que antes ocupaba la semana 3 entera, baja a la semana 5. Se entrega valor demostrable tres semanas antes.
 >
-> Se lo llamó "red de seguridad" pensando que levantaría las fotos donde el QR no se lee. **No las levanta** —el papel que no deja leer el QR tampoco deja leer el texto— y para eso está la detección en el cliente de la semana 4. El OCR queda para comprobantes **sin** QR: anteriores a 2021, no electrónicos, cupones.
+> Se lo llamó "red de seguridad" pensando que levantaría las fotos donde el QR no se lee. **No las levanta** —el papel que no deja leer el QR tampoco deja leer el texto—. Lo que sí levantó buena parte de esas fotos fue cambiar el lector ([ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)). El OCR queda para comprobantes **sin** QR: anteriores a 2021, no electrónicos, cupones.
 
 **Antes de la semana 2:** juntar un set de 20 comprobantes reales variados (propios y de conocidos). Sin eso no hay forma de saber si la cascada funciona, y es el insumo que más cuesta conseguir después.
 
