@@ -5348,15 +5348,15 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <text data-detail="context" x="1299.5" y="138" class="t-muted" font-size="9" text-anchor="middle">invoice.processing (topic)</text>
         </g>
 
-        <g id="node-worker" data-node-id="worker" data-node-label="ocr-worker-service" tabindex="0" role="button" aria-label="Enfocar ocr-worker-service, ZXing · PDFBox · Tess4J, Docker Compose · entorno local" aria-pressed="false" data-node-kind="backend" data-node-sublabel="ZXing · PDFBox · Tess4J" data-node-tag="cascada + ack manual" data-node-context="Docker Compose · entorno local">
-          <title>ocr-worker-service · ZXing · PDFBox · Tess4J · Docker Compose · entorno local · cascada + ack manual</title>
+        <g id="node-worker" data-node-id="worker" data-node-label="ocr-worker-service" tabindex="0" role="button" aria-label="Enfocar ocr-worker-service, ZXing + OpenCV · PDFBox · Tess4J, Docker Compose · entorno local" aria-pressed="false" data-node-kind="backend" data-node-sublabel="ZXing + OpenCV · PDFBox · Tess4J" data-node-tag="cascada + ack manual" data-node-context="Docker Compose · entorno local">
+          <title>ocr-worker-service · ZXing + OpenCV · PDFBox · Tess4J · Docker Compose · entorno local · cascada + ack manual</title>
           <rect x="1200" y="260" width="200" height="80" rx="8" class="c-mask"/>
           <rect x="1200" y="260" width="200" height="80" rx="8" class="c-backend" data-animate="node" style="--step:7" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1206 266) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="1300" y="298" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ocr-worker-service</text>
-        <text data-detail="context" x="1300" y="314" class="t-muted" font-size="9" text-anchor="middle">ZXing · PDFBox · Tess4J</text>
+        <text data-detail="context" x="1300" y="314" class="t-muted" font-size="9" text-anchor="middle">ZXing + OpenCV · PDFBox · Tess4J</text>
         <text data-detail="fine" x="1300" y="332" class="t-backend" font-size="7" text-anchor="middle">cascada + ack manual</text>
         </g>
 
@@ -5654,9 +5654,9 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <h3>Extracción en cascada</h3>
         </div>
         <ul>
-          <li>1 · QR de ARCA con ZXing: fecha, CUIT, punto de venta, tipo, número, importe y CAE exactos</li>
-          <li>2 · PDFBox sobre el texto embebido: razón social, neto e IVA</li>
-          <li>3 · OpenCV + Tess4J solo para lo que siga faltando; ante discrepancia gana el QR</li>
+          <li>1 · QR de ARCA, doce campos exactos y sin OCR: ZXing para el PDF rasterizado, el detector de WeChat de OpenCV para las fotos (ADR 010)</li>
+          <li>2 · PDFBox sobre el texto embebido: la razón social, que el QR no trae, y el CUIT del emisor como respaldo</li>
+          <li>3 · Tess4J solo para lo que siga faltando; ante discrepancia gana el QR</li>
         </ul>
       </div>
 

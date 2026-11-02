@@ -113,7 +113,7 @@
       "id": "worker",
       "type": "backend",
       "label": "ocr-worker-service",
-      "sublabel": "ZXing · PDFBox · Tess4J",
+      "sublabel": "ZXing + OpenCV · PDFBox · Tess4J",
       "tag": "cascada + ack manual",
       "pos": [
         1200,
@@ -260,9 +260,9 @@
       "dot": "emerald",
       "title": "Extracción en cascada",
       "items": [
-        "1 · QR de ARCA con ZXing: fecha, CUIT, punto de venta, tipo, número, importe y CAE exactos",
-        "2 · PDFBox sobre el texto embebido: razón social, neto e IVA",
-        "3 · OpenCV + Tess4J solo para lo que siga faltando; ante discrepancia gana el QR"
+        "1 · QR de ARCA, doce campos exactos y sin OCR: ZXing para el PDF rasterizado, el detector de WeChat de OpenCV para las fotos (ADR 010)",
+        "2 · PDFBox sobre el texto embebido: la razón social, que el QR no trae, y el CUIT del emisor como respaldo",
+        "3 · Tess4J solo para lo que siga faltando; ante discrepancia gana el QR"
       ]
     },
     {

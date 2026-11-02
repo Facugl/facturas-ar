@@ -5294,7 +5294,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <rect x="675.9" y="502" width="124.19999999999999" height="18" rx="3" class="c-mask"/>
           <text x="738" y="512" class="t-muted" font-size="11" text-anchor="middle">bytes del archivo</text>
         </g>
-        <text data-detail="context" x="505" y="540" class="t-muted" font-size="7"><tspan x="505" dy="0">Cascada: 1 QR con</tspan><tspan x="505" dy="11">ZXing · 2 texto</tspan><tspan x="505" dy="11">embebido con PDFBox ·</tspan><tspan x="505" dy="11">3 OCR con Tess4J. Gana</tspan><tspan x="505" dy="11">la fuente más</tspan><tspan x="505" dy="11">confiable de cada</tspan><tspan x="505" dy="11">campo.</tspan></text>
+        <text data-detail="context" x="505" y="540" class="t-muted" font-size="7"><tspan x="505" dy="0">Cascada: 1 QR con</tspan><tspan x="505" dy="11">ZXing y OpenCV · 2</tspan><tspan x="505" dy="11">texto embebido con</tspan><tspan x="505" dy="11">PDFBox · 3 OCR con</tspan><tspan x="505" dy="11">Tess4J. Gana la fuente</tspan><tspan x="505" dy="11">más confiable de cada</tspan><tspan x="505" dy="11">campo.</tspan></text>
         </g>
 
         <g data-edge-from="worker" data-edge-to="postgres" data-edge-label="datos fusionados + Job a EXTRACTED" data-edge-key="10" data-edge-id="persiste-datos">
@@ -5722,8 +5722,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <h3>Extracción en cascada</h3>
         </div>
         <ul>
-          <li>El QR obligatorio de ARCA (RG 4892) da siete campos exactos, sin OCR</li>
-          <li>PDFBox cubre razón social, neto e IVA sobre el texto embebido del PDF</li>
+          <li>El QR obligatorio de ARCA (RG 4892) da doce campos exactos, sin OCR, con dos decodificadores probados en orden</li>
+          <li>PDFBox saca del texto embebido la razón social, que el QR no trae</li>
           <li>El OCR queda de último recurso, solo para los campos que siguen vacíos</li>
           <li>Cada campo registra su fuente; ante discrepancia gana el QR</li>
         </ul>

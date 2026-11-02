@@ -153,7 +153,7 @@
       "y": 522,
       "label": "bytes del archivo",
       "variant": "return",
-      "note": "Cascada: 1 QR con ZXing · 2 texto embebido con PDFBox · 3 OCR con Tess4J. Gana la fuente más confiable de cada campo."
+      "note": "Cascada: 1 QR con ZXing y OpenCV · 2 texto embebido con PDFBox · 3 OCR con Tess4J. Gana la fuente más confiable de cada campo."
     },
     {
       "id": "persiste-datos",
@@ -296,8 +296,8 @@
       "dot": "emerald",
       "title": "Extracción en cascada",
       "items": [
-        "El QR obligatorio de ARCA (RG 4892) da siete campos exactos, sin OCR",
-        "PDFBox cubre razón social, neto e IVA sobre el texto embebido del PDF",
+        "El QR obligatorio de ARCA (RG 4892) da doce campos exactos, sin OCR, con dos decodificadores probados en orden",
+        "PDFBox saca del texto embebido la razón social, que el QR no trae",
         "El OCR queda de último recurso, solo para los campos que siguen vacíos",
         "Cada campo registra su fuente; ante discrepancia gana el QR"
       ]

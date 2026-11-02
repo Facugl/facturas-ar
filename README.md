@@ -250,6 +250,16 @@ node <ruta>/archify/bin/archify.mjs finalize architecture \
 
 Las vistas estáticas (`*-light.png` / `*-dark.png`) salen de `archify visual-check <html> --out-dir <dir>`.
 
+Sin Archify a mano, esas PNG salen igual del HTML ya renderizado: son una
+captura de la página entera, así que Chrome headless alcanza.
+
+```bash
+chrome --headless=new --hide-scrollbars --force-prefers-reduced-motion \
+  --window-size=2048,1320 --force-device-scale-factor=1 \
+  --screenshot=docs/diagrams/arquitectura-light.png \
+  "file:///<ruta absoluta>/docs/diagrams/arquitectura.html?theme=light"
+```
+
 ---
 
 ## 5. Esquema de datos
@@ -451,7 +461,7 @@ El worker corre las estrategias en orden de prioridad y **cada campo se queda co
 
 | # | Estrategia | Librería | Confianza | Qué aporta |
 |---|---|---|---|---|
-| 1 | **QR** | ZXing | 1.0 | fecha, CUIT, punto de venta, tipo, número, importe, moneda, cotización, doc. receptor, CAE |
+| 1 | **QR** | ZXing + OpenCV | 1.0 | fecha, CUIT, punto de venta, tipo, número, importe, moneda, cotización, doc. receptor, CAE |
 | 2 | **Texto embebido** | Apache PDFBox | 0.9 | razón social y CUIT del emisor — solo si el PDF trae texto |
 | 3 | **OCR** | OpenCV + Tess4J | 0.3 – 0.8 | lo que siga faltando, en fotos y PDFs escaneados |
 
