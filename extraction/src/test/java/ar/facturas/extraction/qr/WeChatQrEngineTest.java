@@ -143,6 +143,24 @@ class WeChatQrEngineTest {
                 Arguments.of("TYPE_BYTE_BINARY", BufferedImage.TYPE_BYTE_BINARY));
     }
 
+    /**
+     * That the detector can find a small code lost on a full page — 120
+     * pixels of code on an A4 at 150 dpi, about 1.6 pixels per module.
+     *
+     * <p><strong>It says "can", not "always does", and the difference was
+     * measured.</strong> Sweeping this same page over rendered sizes from
+     * 100 to 420 pixels, this payload is read at every size except 160,
+     * 180 and 200 — where it fails outright, ten times out of ten, at a
+     * <em>coarser</em> density than the 120 that works. Detection is
+     * neither monotonic in scale nor independent of content: the previous
+     * payload used here was read at all twelve sizes, and swapping it for
+     * an equivalent one moved the holes.
+     *
+     * <p>So no single size proves a guarantee, and this test does not
+     * claim one. The guarantee is at the reader, which tries ZXing first
+     * and covers exactly this gap — see
+     * {@code QrImageReaderTest.readsASmallQrOnAFullPageAtAnyPrintedSize}.
+     */
     @Test
     void findsASmallCodeOnAFullPage() {
         assumeTrue(WeChatQrEngine.available());
@@ -150,7 +168,7 @@ class WeChatQrEngineTest {
         Graphics2D g = page.createGraphics();
         g.setColor(Color.WHITE);
         g.fillRect(0, 0, 1240, 1754);
-        g.drawImage(codeOf(TEXT, 160), 80, 1500, null);
+        g.drawImage(codeOf(TEXT, 120), 80, 1500, null);
         g.dispose();
 
         assertThat(wechat.read(page)).contains(TEXT);

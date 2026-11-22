@@ -82,11 +82,11 @@ class ExtractionOrchestratorTest {
     void theLaterStrategiesStillContributeTheFieldsTheEarlierOnesCouldNotCarry() {
         var orchestrator = new ExtractionOrchestrator(List.of(
                 Fake.of(FieldSource.QR, Map.of(
-                        InvoiceField.TOTAL, "69900",
-                        InvoiceField.CAE, "86305991725923")),
+                        InvoiceField.TOTAL, "18450",
+                        InvoiceField.CAE, "70417054367476")),
                 Fake.of(FieldSource.OCR, Map.of(
-                        InvoiceField.ISSUER_BUSINESS_NAME, "TITAN Market",
-                        InvoiceField.TOTAL, "69900 mal leido"))));
+                        InvoiceField.ISSUER_BUSINESS_NAME, "PANADERIA LA ESPIGA S.A.",
+                        InvoiceField.TOTAL, "18450 mal leido"))));
 
         var result = orchestrator.extract(ANY);
 
@@ -104,7 +104,7 @@ class ExtractionOrchestratorTest {
     void aStrategyThatThrowsDoesNotTakeTheCascadeDown() {
         var orchestrator = new ExtractionOrchestrator(List.of(
                 Fake.failing(FieldSource.QR),
-                Fake.of(FieldSource.OCR, Map.of(InvoiceField.TOTAL, "69900"))));
+                Fake.of(FieldSource.OCR, Map.of(InvoiceField.TOTAL, "18450"))));
 
         var result = orchestrator.extract(ANY);
 
@@ -116,7 +116,7 @@ class ExtractionOrchestratorTest {
     void aStrategyThatDoesNotApplyIsSkippedWithoutComplaint() {
         var orchestrator = new ExtractionOrchestrator(List.of(
                 Fake.unsupported(FieldSource.QR),
-                Fake.of(FieldSource.OCR, Map.of(InvoiceField.TOTAL, "69900"))));
+                Fake.of(FieldSource.OCR, Map.of(InvoiceField.TOTAL, "18450"))));
 
         var result = orchestrator.extract(ANY);
 
@@ -155,7 +155,7 @@ class ExtractionOrchestratorTest {
     void producesTheMapsThatGoIntoTheJsonbColumns() {
         var result = new ExtractionOrchestrator(List.of(
                 Fake.of(FieldSource.QR, Map.of(InvoiceField.ISSUER_CUIT, 33693450239L)),
-                Fake.of(FieldSource.OCR, Map.of(InvoiceField.ISSUER_BUSINESS_NAME, "TITAN"))))
+                Fake.of(FieldSource.OCR, Map.of(InvoiceField.ISSUER_BUSINESS_NAME, "PANADERIA LA ESPIGA"))))
                 .extract(ANY);
 
         assertThat(result.fieldSources())

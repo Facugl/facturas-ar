@@ -125,6 +125,33 @@ class QrImageReaderTest {
     }
 
     /**
+     * The same page across every size a comprobante realistically prints
+     * its QR at, and <strong>this is the test that earns the second
+     * engine its place.</strong>
+     *
+     * <p>Neither engine passes this alone. OpenCV's detector is not
+     * monotonic in scale: measured over this sweep it reads a payload at
+     * 140 pixels and fails at 160, 180 and 200 — coarser renders of the
+     * same code — and which sizes fail depends on the payload's content,
+     * not its length. ZXing, on a clean synthetic render, reads all of
+     * them. On a photo the roles reverse, which is what
+     * {@code ADR 010} measured and why the cascade exists.
+     *
+     * <p>Together they cover the range. The reason to assert it over a
+     * sweep rather than one size is that a single size passing is a
+     * coincidence of that payload, and a test that encodes a coincidence
+     * goes red the day someone edits a fixture.
+     */
+    @ParameterizedTest(name = "{0} px de lado")
+    @ValueSource(ints = {100, 120, 140, 160, 180, 200, 220, 240, 260, 300, 360, 420})
+    void readsASmallQrOnAFullPageAtAnyPrintedSize(int size) {
+        String text = arcaQrText();
+        BufferedImage page = onAPage(qrImage(text, size), 1240, 1754, 80, 1754 - size - 120);
+
+        assertThat(reader.read(page)).contains(text);
+    }
+
+    /**
      * Pins down the decision not to loop over rotations. A QR carries
      * three finder patterns so a reader can work out its orientation, and
      * ZXing uses them. If this ever fails, the format assumption was

@@ -24,13 +24,14 @@ final class TestPayloads {
     /**
      * The shape a real Factura B arrives in.
      *
-     * <p>CUIT, recipient document and CAE are invented. {@code 33693450239}
-     * is ARCA's own published CUIT, used here because it is public and
-     * valid.
+     * <p>Every value is invented — CUIT, point of sale, comprobante
+     * number, amount, recipient document and CAE. What is reproduced is
+     * only the shape. {@code 33693450239} is ARCA's own published CUIT,
+     * used here because it is public and valid.
      */
     static final String REAL_SHAPE_JSON =
-            "{\"ver\":1,\"fecha\":\"2026-07-29\",\"cuit\":33693450239,\"ptoVta\":6,"
-            + "\"tipoCmp\":6,\"nroCmp\":14651,\"importe\":69900.0,\"moneda\":\"PES\","
+            "{\"ver\":1,\"fecha\":\"2026-07-29\",\"cuit\":33693450239,\"ptoVta\":3,"
+            + "\"tipoCmp\":6,\"nroCmp\":1201,\"importe\":18450.0,\"moneda\":\"PES\","
             + "\"ctz\":1,\"tipoDocRec\":96,\"nroDocRec\":11111111,"
             + "\"tipoCodeAut\":\"E\",\"codAut\":11111111111111}";
 

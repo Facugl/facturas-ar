@@ -50,7 +50,7 @@ class RealWorldQrTest {
 
         assertThat(result).isInstanceOf(QrDecodeResult.Decoded.class);
         var payload = ((QrDecodeResult.Decoded) result).payload();
-        assertThat(payload.ptoVta()).isEqualTo(6);
+        assertThat(payload.ptoVta()).isEqualTo(3);
         assertThat(payload.tipoCmp()).isEqualTo(6);          // Factura B
         assertThat(payload.issueDate()).isEqualTo(LocalDate.of(2026, 7, 29));
         assertThat(payload.isInPesos()).isTrue();
@@ -125,8 +125,8 @@ class RealWorldQrTest {
     }
 
     /**
-     * Real amounts arrive as {@code 69900.0}, with one decimal place,
-     * rather than the {@code 69900.00} a formatted total would show.
+     * Real amounts arrive as {@code 18450.0}, with one decimal place,
+     * rather than the {@code 18450.00} a formatted total would show.
      * BigDecimal keeps them equal in value, which is what matters.
      */
     @Test
@@ -134,7 +134,7 @@ class RealWorldQrTest {
         var payload = ((QrDecodeResult.Decoded)
                 decoder.decode(TestPayloads.arcaQr(TestPayloads.REAL_SHAPE_JSON))).payload();
 
-        assertThat(payload.importe()).isEqualByComparingTo("69900");
-        assertThat(payload.importe()).isEqualByComparingTo("69900.00");
+        assertThat(payload.importe()).isEqualByComparingTo("18450");
+        assertThat(payload.importe()).isEqualByComparingTo("18450.00");
     }
 }

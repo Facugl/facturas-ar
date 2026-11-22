@@ -82,13 +82,17 @@ curl localhost:8080/jobs/863f24b4-...
 ```json
 {
   "status": "EXTRACTED",  "qrDetected": true,  "sourceType": "PDF_TEXT",
-  "confidence": 1.0,
+  "confidence": 0.992,
   "fields": {
-    "issuerCuit": "20-32629591-5",  "invoiceTypeCode": 6,
-    "pointOfSale": 6,               "invoiceNumber": 14651,
-    "issueDate": "2026-07-29",      "total": 69900.0,
-    "cae": 86305991725923,
-    "sources": { "total": "QR", "cae": "QR", "issuer_cuit": "QR" }
+    "issuerCuit": "30-71234567-1",  "invoiceTypeCode": 6,
+    "pointOfSale": 3,               "invoiceNumber": 1201,
+    "issueDate": "2026-03-02",      "total": 18450.00,
+    "cae": 70417054367476,
+    "issuerBusinessName": "PANADERIA LA ESPIGA S.A.",
+    "sources": {
+      "total": "QR", "cae": "QR", "issuer_cuit": "QR",
+      "issuer_business_name": "PDF_TEXT"
+    }
   }
 }
 ```

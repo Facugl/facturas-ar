@@ -138,6 +138,34 @@ Detalles que la implementación fija, cada uno con su test:
 
 ## Consecuencias
 
+**Apareció una segunda razón para los dos motores, en la dirección
+opuesta a la primera.** Esta decisión se tomó porque OpenCV lee fotos que
+ZXing no. Midiendo otra cosa —el 22/11/2026, al cambiar unos valores de
+fixture por sintéticos— salió que también vale al revés: **ZXing lee
+renders que OpenCV no.**
+
+El mismo QR dibujado sobre una página A4 a 150 dpi, barriendo el tamaño
+del código de 100 a 420 px:
+
+| px de lado | 100 | 120 | 140 | 160 | 180 | 200 | 220 | 240 | 260 | 300 | 360 | 420 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| WeChat, payload A | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| WeChat, payload B | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Lector completo** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+Dos cosas que no se esperaban. **La detección de WeChat no es monótona
+con la escala:** el payload B falla a 160 px y lee a 120, es decir falla
+con el código *más grande*. Y **depende del contenido, no del largo:**
+los dos payloads producen un QR de 73 módulos y una URL de 309
+caracteres; cambian los dígitos y se mueven los huecos. Diez corridas por
+celda, siempre 10/10 o 0/10 — es determinista, no ruido.
+
+No cambia la decisión, la refuerza: ningún motor solo pasa el barrido y
+el lector sí. Lo que sí cambió es **dónde vive la garantía**. El test que
+la afirmaba estaba al nivel del motor y a un tamaño fijo, o sea que
+estaba verde por coincidencia entre ese payload y ese tamaño; se movió a
+`QrImageReaderTest`, barriendo los doce tamaños.
+
 **La cobertura sobre la muestra pasa de 1 de 6 a 4 de 6**, y de 0 a 2 si
 se cuentan solo las lecturas con datos aprovechables. Las dos que quedan
 afuera son el mismo emisor imprimiendo mal.
