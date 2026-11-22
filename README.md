@@ -213,7 +213,7 @@ El orden técnico del roadmap (sync → cola/Redis → observabilidad → pulido
 3. Comprobante **sin** QR → degrada a texto/OCR sin romperse; el usuario puede completar a mano.
 4. Usuario puede corregir cualquier campo y confirmar; cada corrección queda registrada.
 5. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción. Un archivo ilegible o que no es una factura **no es un fallo del sistema**: el formulario sale vacío y el documento queda guardado igual.
-6. Export CSV de un rango de fechas que abre en Excel y Sheets con montos como números y acentos correctos, **sin intervención manual**. *(✅ **Cumplido en Excel**, verificado abriendo el archivo. La vuelta por Excel encontró algo que ningún test podía: el CAE salía como `7,04171E+13`. Pendiente la mitad de Sheets del criterio.)*
+6. Export CSV de un rango de fechas que abre en Excel y Sheets con montos como números y acentos correctos, **sin intervención manual**. *(✅ **Cumplido en los dos**, verificado abriendo el archivo. La vuelta por Excel encontró algo que ningún test podía: el CAE salía como `7,04171E+13`.)*
 7. Un usuario no puede acceder a datos de otro — con test automatizado que lo demuestre.
 8. El sistema sobrevive a que el worker se caiga a mitad de un procesamiento: el mensaje se reprocesa y el resultado no se duplica. *(Fase 2 — es el criterio que justifica toda la mensajería.)*
 9. Siempre hay feedback visible de estado ("procesando"), aunque la Fase 1 sea síncrona.
@@ -755,16 +755,33 @@ fórmula, y le pone `="70417054367476"` adelante a cualquier software
 contable, que es la única razón por la que esa columna existe. El
 tabulador deja los dígitos detrás de un espacio que un `trim()` saca.
 
-Las tres se probaron abriendo el archivo en un Excel real, que es el
+Las cuatro se probaron abriendo el archivo en un Excel real, que es el
 único lugar donde se pueden probar.
 
-> **El criterio de aceptación está cumplido y verificado a mano.** El
-> archivo abre en Excel con los importes como números sumables, las notas
-> de crédito en negativo, los acentos y eñes correctos, la razón social
-> con punto y coma en una sola celda y el CAE legible, sin tocar nada.
-> Los tests cubren que los bytes lleven lo que Excel necesita; que Excel
-> efectivamente lo haga es una verificación manual, y se repite si cambia
-> el formato.
+**En Google Sheets el tabulador no hace falta, y tampoco molesta.** Sheets
+muestra un entero de 14 dígitos completo, no usa notación científica como
+Excel, así que el CAE se lee bien con tabulador o sin él. Necesario en
+uno, inofensivo en el otro: es el mejor caso posible para esa decisión.
+
+> **El criterio de aceptación está cumplido y verificado a mano, en Excel
+> y en Google Sheets.** El archivo abre con los importes como números
+> sumables, las notas de crédito en negativo, los acentos y eñes
+> correctos, la razón social con punto y coma en una sola celda y el CAE
+> legible, sin tocar nada. La suma de la columna `total` del archivo de
+> muestra da `29870,75`, que es el chequeo más barato de que los importes
+> entraron como números **y** de que la nota de crédito entró en negativo.
+>
+> Los tests cubren que los bytes lleven lo que una planilla necesita; que
+> la planilla efectivamente lo haga es una verificación manual, y se
+> repite si cambia el formato.
+
+> **Un detalle de Sheets que no es del archivo.** Sheets parsea según el
+> idioma del documento, no el del sistema, y su diálogo de importación
+> tiene una opción **"Convertir texto en números, fechas y fórmulas"**.
+> Con esa opción apagada entra todo como texto —hasta un `6` suelto— y
+> parece que el formato está roto cuando no lo está. Con el idioma en
+> Estados Unidos, `18450,00` no es un número y `02/03/2026` es el 3 de
+> febrero. Las dos cosas se configuran antes de importar.
 
 ### Observabilidad
 - Micrometer (Spring Boot Actuator) + `micrometer-registry-prometheus`
