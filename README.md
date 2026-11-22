@@ -732,7 +732,7 @@ El contenedor arranca una sola vez por JVM y Ryuk lo limpia al terminar.
 | Decimales con coma (`12100,50`) | Para que Excel lo reconozca como número y sea sumable |
 | Fechas `dd/mm/yyyy` | Estándar AFIP |
 | Notas de crédito en negativo | Si no, el total del período está mal |
-| Columnas `cae` y `tipo_comprobante` (código numérico) | Lo hace importable a software contable |
+| Columnas `cae` y `tipo_codigo` (código numérico) | Lo hace importable a software contable. Al lado va `tipo` con la descripción: el código para la máquina, el texto para quien abre el archivo |
 
 > Probarlo con Excel real, no solo con Sheets. Un export que el usuario tiene que arreglar a mano es exactamente el problema que el proyecto dice resolver.
 
@@ -947,7 +947,7 @@ UPDATE job
 
 ## 9. Estructura del repo (monorepo, multi-módulo Maven)
 
-> **Esto es la estructura objetivo, no la foto de hoy.** Al momento de escribir esto existen `shared-domain`, `extraction` y `upload-api-service`; el resto se crea cuando le toque. Los módulos vacíos no se adelantan: uno que no hace nada durante seis semanas es ruido, no preparación.
+> **Esto es la estructura objetivo, no la foto de hoy.** Existen `shared-domain`, `extraction` y `upload-api-service`, y esos tres están dibujados como están hoy de verdad. El resto —`shared-events`, `ocr-worker-service`, `frontend`, `monitoring`— se crea cuando le toque. Los módulos vacíos no se adelantan: uno que no hace nada durante seis semanas es ruido, no preparación.
 
 **Por qué monorepo:** entidades JPA compartidas (DB única), un solo `docker-compose.yml` para todo el sistema, narrativa unificada de README/ADRs. Repos separados solo se justificarían con equipos/despliegues independientes, que no es el caso.
 
@@ -964,16 +964,19 @@ facturas-ar/
 ├── docs/
 │   ├── architecture.md
 │   ├── diagrams/                 # JSON de Archify + HTML/PNG generados
-│   ├── adr/                        # 8 decisiones, con sus alternativas
+│   ├── adr/                        # 10 decisiones, con sus alternativas
 │   └── api/
 ├── pom.xml                         # parent, packaging=pom
 │
 ├── shared-domain/                  # plain Java, NO Spring Boot
 │   └── src/main/java/.../domain/
-│       ├── Job.java, Document.java, ExtractedInvoiceData.java
-│       ├── FieldCorrection.java, User.java, OutboxEvent.java
-│       ├── vo/ (Cuit, Importe, NumeroComprobante, Cae)
-│       └── enums/ (JobStatus, SourceType, TipoComprobante, FieldSource...)
+│       ├── model/                  # Job, Document, ExtractedInvoiceData,
+│       │                           #   FieldCorrection, User
+│       ├── port/                   # DocumentStorage
+│       ├── vo/                     # Cuit (con dígito verificador)
+│       ├── converter/              # CuitConverter (JPA)
+│       └── enums/                  # JobStatus, SourceType, TipoComprobante,
+│                                   #   FieldSource, Sign
 │
 ├── extraction/                     # plain Java, NO Spring Boot
 │   └── src/main/java/.../extraction/
@@ -982,14 +985,21 @@ facturas-ar/
 │       ├── qr/                     # ZXing + OpenCV/WeChat, Base64, JSON del QR
 │       ├── pdftext/                # estrategia sobre el texto embebido
 │       ├── pdf/                    # PDFBox: texto y rasterizado de páginas
-│       ├── ocr/                    # Tess4J, preprocesamiento OpenCV
-│       └── parser/                 # reglas AFIP sobre texto plano, compartidas con el OCR
+│       ├── parser/                 # reglas AFIP sobre texto plano, compartidas con el OCR
+│       └── ocr/                    # Tess4J, preprocesamiento OpenCV — SEMANA 5
 │
 ├── upload-api-service/             # runnable Spring Boot app
 │   ├── Dockerfile
-│   └── src/main/java/.../
-│       ├── controller/, service/, repository/
-│       └── config/                 # RabbitMQ, Redis, almacenamiento S3
+│   ├── src/main/resources/db/migration/   # Flyway: Postgres es de las migraciones
+│   └── src/main/java/.../upload/
+│       ├── adapters/in/rest/       # Document, Job, Export + manejo de errores
+│       ├── adapters/out/persistence/   # repositorios Spring Data
+│       ├── adapters/out/storage/   # S3DocumentStorage
+│       ├── application/usecase/    # UploadComprobante, ExtractComprobante,
+│       │                           #   ExportComprobantes
+│       ├── application/export/     # ComprobanteCsvWriter: las reglas Excel-AR
+│       ├── application/port/       # CurrentUser
+│       └── config/                 # almacenamiento S3, cascada, usuario de dev
 │
 ├── shared-events/                  # RabbitMQ event DTOs — FASE 2
 │   └── src/main/java/.../events/

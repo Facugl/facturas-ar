@@ -2,7 +2,16 @@
 
 > Documento de trabajo. Complementa al README: el README cuenta **qué** se construye, este documento explica **por qué** el problema es así, **qué casos de uso** se derivan de eso y **qué arquitectura** sostiene esos casos de uso.
 >
-> Última revisión: 2026-10-17.
+> Última revisión: 2026-11-22.
+>
+> **Es un registro de análisis, no un tablero de avance.** Lo que está
+> hecho y lo que falta vive en el roadmap del README. Varias secciones de
+> acá son propuestas anteriores a la implementación y se dejan como
+> estaban a propósito —la §4.5 propone nombres de columna en español que
+> terminaron siendo en inglés, por ejemplo—, porque el valor del
+> documento es el razonamiento del momento, no el estado de hoy. Cuando
+> una medición posterior tiró abajo algo de acá, está anotado en el lugar
+> en vez de reescrito.
 
 ---
 
@@ -26,7 +35,7 @@ Y el JSON (versión 1 de la especificación) es:
 
 ### Qué significa esto
 
-El README actual plantea OCR como el motor del sistema: foto → Tesseract → regex → campos con confianza parcial. Pero para cualquier comprobante electrónico emitido después de junio de 2021 — que es la abrumadora mayoría de lo que alguien va a subir — **seis de los campos más importantes se leen del QR con precisión perfecta y cero ambigüedad**:
+El README actual plantea OCR como el motor del sistema: foto → Tesseract → regex → campos con confianza parcial. Pero para cualquier comprobante electrónico emitido después de junio de 2021 — que es la abrumadora mayoría de lo que alguien va a subir — **siete de los campos más importantes se leen del QR con precisión perfecta y cero ambigüedad**:
 
 | Campo del MVP | Vía QR | Vía OCR |
 |---|---|---|
@@ -363,7 +372,7 @@ Este es el corazón del proyecto. El flujo en cascada:
 - **Decimales:** coma. `12100,50`.
 - **Fechas:** `dd/mm/yyyy`.
 - **Notas de crédito en negativo.** Si no, el total del período está mal.
-- Una columna `cae` y una `tipo_comprobante` con el código numérico, para que sea importable a software contable.
+- Una columna `cae` y una `tipo_comprobante` con el código numérico, para que sea importable a software contable. *(Implementado: la columna quedó como `tipo_codigo`, con una `tipo` al lado que lleva la descripción — el código para la máquina, el texto para quien abre el archivo.)*
 
 **Criterio de aceptación:** el CSV se abre en Excel y en Google Sheets con los montos reconocidos como números (alineados a la derecha, sumables) y los acentos correctos, sin tocar nada.
 
