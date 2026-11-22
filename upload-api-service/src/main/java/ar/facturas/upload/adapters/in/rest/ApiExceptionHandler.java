@@ -1,7 +1,9 @@
 package ar.facturas.upload.adapters.in.rest;
 
 import ar.facturas.domain.port.DocumentStorage;
+import ar.facturas.upload.application.usecase.InvalidDateRangeException;
 import ar.facturas.upload.application.usecase.InvalidUploadException;
+import ar.facturas.upload.application.usecase.JobNotConfirmableException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -40,6 +42,24 @@ public class ApiExceptionHandler {
     ProblemDetail tooLarge(MaxUploadSizeExceededException e) {
         return problem(HttpStatus.CONTENT_TOO_LARGE, "file-too-large", "File too large",
                 "The file exceeds the 10 MB limit");
+    }
+
+    /** Inverted or too long: the caller picks other dates and retries. */
+    @ExceptionHandler(InvalidDateRangeException.class)
+    ProblemDetail invalidDateRange(InvalidDateRangeException e) {
+        return problem(HttpStatus.BAD_REQUEST, "invalid-date-range",
+                "Invalid date range", e.getMessage());
+    }
+
+    /**
+     * 409 and not 400: the request is well formed and the same call works
+     * once the extraction finishes. What is wrong is the state of the job,
+     * which is what Conflict is for.
+     */
+    @ExceptionHandler(JobNotConfirmableException.class)
+    ProblemDetail notConfirmable(JobNotConfirmableException e) {
+        return problem(HttpStatus.CONFLICT, "job-not-confirmable",
+                "Job cannot be confirmed", e.getMessage());
     }
 
     /**

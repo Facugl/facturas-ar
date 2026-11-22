@@ -16,13 +16,17 @@
 
 ## Estado actual
 
-**Fase 1, semana 2 de 6.** El sistema ingesta un comprobante y le extrae
-los datos del QR de ARCA, de punta a punta.
+**Fase 1, semanas 1-3 y el export de la 5.** El sistema ingesta un
+comprobante, le extrae los datos, y devuelve el período en un CSV que
+abre en Excel sin tocar nada. El lazo está cerrado de punta a punta.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, `POST /documents` y `GET /jobs/:id`, razón social desde el texto del PDF, stack dockerizado, 192 tests, CI |
-| ⬜ **Falta** | Detección del QR en el cliente, OCR de respaldo, export CSV, frontend, autenticación, y toda la Fase 2 (cola, worker, Redis, outbox) |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación y **export CSV por rango de fechas**, stack dockerizado, 235 tests, CI |
+| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y toda la Fase 2 (cola, worker, Redis, outbox) |
+
+**La API hoy:** `POST /documents` · `GET /jobs/:id` ·
+`PUT /jobs/:id/confirm` · `GET /export/csv?from=&to=`
 
 Lo que el resto de este documento describe es la **arquitectura final**,
 no el estado de avance. El roadmap de la [sección 11](#11-roadmap-y-estimación-de-tiempo)
@@ -96,6 +100,29 @@ Subir el mismo archivo otra vez devuelve `200` con el job que ya tenías.
 Subir la misma factura en un archivo distinto devuelve `202`, y el job
 queda en `DUPLICATE` apuntando al original — son dos barreras distintas,
 explicadas en el [ADR 008](docs/adr/008-deduplicacion-en-tres-capas.md).
+
+Confirmado el comprobante, entra al historial exportable:
+
+```bash
+curl -X PUT localhost:8080/jobs/863f24b4-.../confirm
+# 200 OK, el job queda en CONFIRMED
+# 409 si todavía no terminó de extraerse: el pedido está bien, el job no está listo
+
+curl -OJ "localhost:8080/export/csv?from=2026-03-01&to=2026-03-31"
+# comprobantes-2026-03-01-a-2026-03-31.csv
+```
+
+```csv
+fecha;tipo_codigo;tipo;punto_venta;numero;cuit_emisor;razon_social;moneda;cotizacion;total;cae
+02/03/2026;6;Factura B;3;1201;30-71234567-1;PANADERÍA LA ESPIGA S.A.;PES;1;18450,00;70417054367476
+15/03/2026;8;Nota de Crédito B;3;1202;30-71234567-1;PANADERÍA LA ESPIGA S.A.;PES;1;-2100,00;70417054367478
+```
+
+Solo salen los comprobantes **confirmados**, y por **fecha de emisión**,
+no de carga: una factura de marzo subida en mayo pertenece a marzo. La
+nota de crédito sale en negativo, que es lo que hace que el total del
+período cierre. El resto de las reglas del archivo está en la
+[sección 7](#export).
 
 ### Para desarrollar
 
@@ -182,7 +209,7 @@ El orden técnico del roadmap (sync → cola/Redis → observabilidad → pulido
 3. Comprobante **sin** QR → degrada a texto/OCR sin romperse; el usuario puede completar a mano.
 4. Usuario puede corregir cualquier campo y confirmar; cada corrección queda registrada.
 5. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción. Un archivo ilegible o que no es una factura **no es un fallo del sistema**: el formulario sale vacío y el documento queda guardado igual.
-6. Export CSV de un rango de fechas que abre en Excel y Sheets con montos como números y acentos correctos, **sin intervención manual**.
+6. Export CSV de un rango de fechas que abre en Excel y Sheets con montos como números y acentos correctos, **sin intervención manual**. *(Implementado y cubierto por tests hasta donde un test llega: separador, BOM, coma decimal, formato de fecha, signo de las notas de crédito y escapado. **Falta abrirlo en un Excel real**, que es lo único que valida el criterio como está escrito.)*
 7. Un usuario no puede acceder a datos de otro — con test automatizado que lo demuestre.
 8. El sistema sobrevive a que el worker se caiga a mitad de un procesamiento: el mensaje se reprocesa y el resultado no se duplica. *(Fase 2 — es el criterio que justifica toda la mensajería.)*
 9. Siempre hay feedback visible de estado ("procesando"), aunque la Fase 1 sea síncrona.
@@ -695,6 +722,18 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 
 > Probarlo con Excel real, no solo con Sheets. Un export que el usuario tiene que arreglar a mano es exactamente el problema que el proyecto dice resolver.
 
+**Implementado**, con Apache Commons CSV. Dos decisiones que no estaban
+en la especificación y aparecieron al escribirlo:
+
+| Caso | Qué hace | Por qué |
+|---|---|---|
+| Un `tipo_codigo` fuera de los que modelamos | Exporta el importe **sin signo**, no vacío | `getSignedTotal()` devuelve vacío tanto cuando no hay importe como cuando no se puede decidir el signo. Tratar los dos igual dejaría una fila con total vacío: el comprobante estaría en el archivo y no contaría. Sin signo está bien para todo salvo una nota de crédito, y `tipo_codigo` queda en el archivo para que el caso se vea |
+| Una razón social que empieza con `=`, `+`, `-` o `@` | La prefija con `'` | La planilla ejecuta esa celda como fórmula al abrir el archivo. Es la vía por la que un CSV se convierte en una forma de correr algo en la máquina de quien lo descarga. El `'` la vuelve texto y Excel no lo muestra |
+
+Lo que los tests **no** prueban es el criterio de aceptación: que el
+archivo abra limpio en un Excel real. Eso necesita un Excel real. Lo que
+sí prueban es que los bytes lleven lo que Excel necesita para hacerlo.
+
 ### Observabilidad
 - Micrometer (Spring Boot Actuator) + `micrometer-registry-prometheus`
 - Prometheus 2.5x + Grafana
@@ -987,8 +1026,16 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | ✅ 2 | Upload endpoint + almacenamiento S3, **estrategia QR** (ZXing; el motor de OpenCV se agregó después de medir, [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)) |
 | ✅ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo de la **razón social**. Neto e IVA quedan afuera: son v2, por la decisión de perfil de usuario |
 | ⬜ 4 | Frontend mínimo: upload + **detección del QR en vivo con la cámara** + formulario con origen por campo + historial, auth básica |
-| ⬜ 5 | Export CSV con formato Excel-AR; Tess4J + OpenCV para comprobantes **sin** QR |
+| 🔶 5 | ✅ Export CSV con formato Excel-AR y `PUT /jobs/:id/confirm`, que es la puerta al historial exportable. ⬜ Tess4J + OpenCV para comprobantes **sin** QR |
 | ⬜ 6 (buffer) | Timebox de medio día al decodificado por mosaicos en el servidor, pulido |
+
+> **El export se adelantó a la semana 4.** El roadmap lo tenía después del
+> frontend. Se dio vuelta por una razón concreta: hasta que existió, los
+> datos entraban al sistema y no salían, y "de la foto al CSV" era una
+> promesa que el proyecto no podía cumplir ni siquiera con `curl`. Ahora
+> el lazo cierra sin una línea de frontend. El costo es que el
+> comprobante se confirma sin poder corregirlo, porque corregir es el
+> formulario de revisión y eso sí es la semana 4.
 
 > **El orden cambió respecto de la versión anterior de este roadmap, y es importante:** la estrategia QR va primero porque con ella sola ya existe un sistema que extrae datos correctos de una factura real. El OCR, que antes ocupaba la semana 3 entera, baja a la semana 5. Se entrega valor demostrable tres semanas antes.
 >

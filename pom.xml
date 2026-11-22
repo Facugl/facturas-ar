@@ -46,6 +46,7 @@
     <javacpp.version>1.5.11</javacpp.version>
     <openblas.version>0.3.28-1.5.11</openblas.version>
     <awssdk.version>2.46.7</awssdk.version>
+    <commons-csv.version>1.14.1</commons-csv.version>
   </properties>
 
   <!--
@@ -133,6 +134,22 @@
             <artifactId>numpy</artifactId>
           </exclusion>
         </exclusions>
+      </dependency>
+
+      <!--
+        Escritura del CSV del export.
+
+        Es la unica dependencia del proyecto que se podria reemplazar con
+        un StringBuilder de diez lineas, y es justamente por eso que esta:
+        ese StringBuilder funciona hasta que una razon social trae un
+        punto y coma, unas comillas o un salto de linea, y ahi produce un
+        archivo corrupto que nadie nota hasta que el usuario lo abre.
+        Escapar CSV bien es un problema resuelto.
+      -->
+      <dependency>
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-csv</artifactId>
+        <version>${commons-csv.version}</version>
       </dependency>
 
       <!-- Cliente S3 para MinIO -->

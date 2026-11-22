@@ -4,6 +4,8 @@ import ar.facturas.domain.model.ExtractedInvoiceData;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -43,4 +45,40 @@ public interface ExtractedInvoiceDataRepository
             @Param("typeCode") Integer typeCode,
             @Param("pointOfSale") Integer pointOfSale,
             @Param("invoiceNumber") Long invoiceNumber);
+
+    /**
+     * What the CSV export writes: a user's confirmed comprobantes in a
+     * range of <em>issue</em> dates.
+     *
+     * <p>Three things this query decides, each on purpose:
+     *
+     * <p><strong>{@code CONFIRMED} only.</strong> An extraction the user
+     * has not reviewed is a guess, and a guess does not belong in a file
+     * that feeds an accountant.
+     *
+     * <p><strong>By {@code issueDate}, not by upload date.</strong> A
+     * comprobante from March loaded in May belongs to March. Filtering by
+     * when it happened to be uploaded would put it in the wrong period,
+     * which is the one thing an accounting export may not get wrong.
+     *
+     * <p><strong>A row with no issue date never matches</strong> — it is,
+     * by definition, not inside a date range. That is a real exclusion and
+     * not a bug: it can only happen when the QR did not decode and nobody
+     * filled the date in, and the alternative is putting an undated
+     * comprobante in an arbitrary month.
+     *
+     * <p>No join to {@code documents} is needed: {@code user_id} is
+     * denormalised onto this table precisely for this query.
+     */
+    @Query("""
+            SELECT e FROM ExtractedInvoiceData e
+             WHERE e.user.id = :userId
+               AND e.job.status = ar.facturas.domain.enums.JobStatus.CONFIRMED
+               AND e.issueDate BETWEEN :from AND :to
+             ORDER BY e.issueDate ASC, e.invoiceNumber ASC
+            """)
+    List<ExtractedInvoiceData> findConfirmedBetween(
+            @Param("userId") UUID userId,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to);
 }

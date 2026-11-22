@@ -1,13 +1,16 @@
 package ar.facturas.upload.adapters.in.rest;
 
+import ar.facturas.domain.enums.JobStatus;
 import ar.facturas.domain.model.Document;
 import ar.facturas.domain.model.Job;
 import ar.facturas.domain.model.User;
 import ar.facturas.upload.adapters.out.persistence.ExtractedInvoiceDataRepository;
 import ar.facturas.upload.adapters.out.persistence.JobRepository;
 import ar.facturas.upload.application.port.CurrentUser;
+import ar.facturas.upload.application.usecase.JobNotConfirmableException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -18,6 +21,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -112,5 +116,87 @@ class JobControllerTest {
         controller.get(anasJob.getId());
 
         verify(extractedData, never()).findById(any());
+    }
+
+    /**
+     * Confirming is the gate into the exportable history: nothing the
+     * user has not approved reaches the CSV. So these cover both halves —
+     * that the gate opens when it should, and that it is the same door
+     * RN-07 locks.
+     */
+    @Nested
+    @DisplayName("confirming an extraction")
+    class Confirming {
+
+        private Job extractedJobOwnedBy(UUID userId) {
+            Job job = jobOwnedBy(userId);
+            job.startProcessing();
+            job.markExtracted("none", null);
+            return job;
+        }
+
+        @Test
+        void movesAReviewedJobIntoTheExportableHistory() {
+            Job job = extractedJobOwnedBy(ANA);
+            when(currentUser.id()).thenReturn(ANA);
+            when(jobs.findById(job.getId())).thenReturn(Optional.of(job));
+            when(jobs.save(job)).thenReturn(job);
+            when(extractedData.findById(job.getId())).thenReturn(Optional.empty());
+
+            var response = controller.confirm(job.getId());
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(job.getStatus()).isEqualTo(JobStatus.CONFIRMED);
+        }
+
+        /**
+         * 409, because the request is fine and the same call works once
+         * the extraction finishes. A 400 would tell the caller to change
+         * the request, which is the wrong advice.
+         */
+        @Test
+        @DisplayName("a job that has not been extracted yet is a conflict, not a bad request")
+        void refusesAJobThatIsNotWaitingForReview() {
+            Job pending = jobOwnedBy(ANA);
+            when(currentUser.id()).thenReturn(ANA);
+            when(jobs.findById(pending.getId())).thenReturn(Optional.of(pending));
+
+            assertThatThrownBy(() -> controller.confirm(pending.getId()))
+                    .isInstanceOf(JobNotConfirmableException.class)
+                    .hasMessageContaining("PENDING");
+
+            verify(jobs, never()).save(any());
+        }
+
+        /** Confirmed is terminal: a second confirm is not a no-op, it is a conflict. */
+        @Test
+        void refusesToConfirmTwice() {
+            Job job = extractedJobOwnedBy(ANA);
+            job.confirm();
+            when(currentUser.id()).thenReturn(ANA);
+            when(jobs.findById(job.getId())).thenReturn(Optional.of(job));
+
+            assertThatThrownBy(() -> controller.confirm(job.getId()))
+                    .isInstanceOf(JobNotConfirmableException.class);
+        }
+
+        /**
+         * The write-side version of RN-07, and the worse one: a read leaks
+         * another user's data, this would let a stranger push their
+         * comprobante into someone else's exportable history.
+         */
+        @Test
+        @DisplayName("nobody can confirm someone else's job")
+        void refusesAJobBelongingToAnotherUser() {
+            Job anasJob = extractedJobOwnedBy(ANA);
+            when(currentUser.id()).thenReturn(BETO);
+            when(jobs.findById(anasJob.getId())).thenReturn(Optional.of(anasJob));
+
+            var response = controller.confirm(anasJob.getId());
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+            assertThat(anasJob.getStatus()).isEqualTo(JobStatus.EXTRACTED);
+            verify(jobs, never()).save(any());
+        }
     }
 }
