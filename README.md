@@ -22,7 +22,7 @@ abre en Excel sin tocar nada. El lazo está cerrado de punta a punta.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación y **export CSV por rango de fechas**, stack dockerizado, 235 tests, CI |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación y **export CSV por rango de fechas**, stack dockerizado, 259 tests (12 contra Postgres real), CI |
 | ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y toda la Fase 2 (cola, worker, Redis, outbox) |
 
 **La API hoy:** `POST /documents` · `GET /jobs/:id` ·
@@ -708,6 +708,16 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 - JUnit 5 + AssertJ
 - **Testcontainers** — Postgres, RabbitMQ y el almacenamiento de objetos reales en los tests de integración. Para un proyecto cuyo argumento es "sé manejar infraestructura asíncrona", testear contra H2 y mocks contradice el argumento
 - Set de comprobantes reales versionado como fixtures de la cascada de extracción
+
+**En uso desde el export.** `ExportQueryTest` levanta un Postgres 16
+—la misma imagen del `docker-compose.yml`— corre las migraciones de
+Flyway y arranca la aplicación entera, controllers incluidos. Es el
+único test que lo hace, y existe porque la consulta del export decide
+qué filas entran a un archivo contable: eso lo resuelve SQL, no un mock.
+Las cinco pruebas de HTTP piden el CSV por el puerto real.
+
+Consecuencia práctica: **`./mvnw test` ahora necesita Docker corriendo.**
+El contenedor arranca una sola vez por JVM y Ryuk lo limpia al terminar.
 
 ### Export
 - CSV: Apache Commons CSV o OpenCSV (nunca a mano con StringBuilder)

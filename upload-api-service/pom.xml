@@ -90,6 +90,35 @@
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
+
+    <!--
+      Postgres y el almacenamiento de objetos reales en los tests que los
+      necesitan.
+
+      Nada de H2: la mitad de lo que hay que probar acá es justamente lo
+      que H2 no reproduce — el indice unico parcial de la deduplicacion,
+      el UPDATE condicional del claim, los tipos JSON de field_sources, y
+      que las migraciones de Flyway corran. Un test contra H2 pasa y no
+      dice nada de si el sistema funciona.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-testcontainers</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Testcontainers 2.x renombró los artefactos: en 1.x eran
+         `junit-jupiter` y `postgresql` a secas. Spring Boot 4.1.1 importa
+         el BOM 2.0.5, que solo conoce los nombres nuevos. -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
