@@ -22,7 +22,7 @@ abre en Excel sin tocar nada. El lazo está cerrado de punta a punta.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación y **export CSV por rango de fechas**, stack dockerizado, 259 tests (12 contra Postgres real), CI |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación y **export CSV por rango de fechas**, stack dockerizado, 260 tests (12 contra Postgres real), CI |
 | ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y toda la Fase 2 (cola, worker, Redis, outbox) |
 
 **La API hoy:** `POST /documents` · `GET /jobs/:id` ·
@@ -213,7 +213,7 @@ El orden técnico del roadmap (sync → cola/Redis → observabilidad → pulido
 3. Comprobante **sin** QR → degrada a texto/OCR sin romperse; el usuario puede completar a mano.
 4. Usuario puede corregir cualquier campo y confirmar; cada corrección queda registrada.
 5. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción. Un archivo ilegible o que no es una factura **no es un fallo del sistema**: el formulario sale vacío y el documento queda guardado igual.
-6. Export CSV de un rango de fechas que abre en Excel y Sheets con montos como números y acentos correctos, **sin intervención manual**. *(Implementado y cubierto por tests hasta donde un test llega: separador, BOM, coma decimal, formato de fecha, signo de las notas de crédito y escapado. **Falta abrirlo en un Excel real**, que es lo único que valida el criterio como está escrito.)*
+6. Export CSV de un rango de fechas que abre en Excel y Sheets con montos como números y acentos correctos, **sin intervención manual**. *(✅ **Cumplido en Excel**, verificado abriendo el archivo. La vuelta por Excel encontró algo que ningún test podía: el CAE salía como `7,04171E+13`. Pendiente la mitad de Sheets del criterio.)*
 7. Un usuario no puede acceder a datos de otro — con test automatizado que lo demuestre.
 8. El sistema sobrevive a que el worker se caiga a mitad de un procesamiento: el mensaje se reprocesa y el resultado no se duplica. *(Fase 2 — es el criterio que justifica toda la mensajería.)*
 9. Siempre hay feedback visible de estado ("procesando"), aunque la Fase 1 sea síncrona.
@@ -736,17 +736,35 @@ El contenedor arranca una sola vez por JVM y Ryuk lo limpia al terminar.
 
 > Probarlo con Excel real, no solo con Sheets. Un export que el usuario tiene que arreglar a mano es exactamente el problema que el proyecto dice resolver.
 
-**Implementado**, con Apache Commons CSV. Dos decisiones que no estaban
+**Implementado**, con Apache Commons CSV. Tres decisiones que no estaban
 en la especificación y aparecieron al escribirlo:
 
 | Caso | Qué hace | Por qué |
 |---|---|---|
 | Un `tipo_codigo` fuera de los que modelamos | Exporta el importe **sin signo**, no vacío | `getSignedTotal()` devuelve vacío tanto cuando no hay importe como cuando no se puede decidir el signo. Tratar los dos igual dejaría una fila con total vacío: el comprobante estaría en el archivo y no contaría. Sin signo está bien para todo salvo una nota de crédito, y `tipo_codigo` queda en el archivo para que el caso se vea |
-| Una razón social que empieza con `=`, `+`, `-` o `@` | La prefija con `'` | La planilla ejecuta esa celda como fórmula al abrir el archivo. Es la vía por la que un CSV se convierte en una forma de correr algo en la máquina de quien lo descarga. El `'` la vuelve texto y Excel no lo muestra |
+| El `cae`, que son 14 dígitos | **Tabulador adelante**, para que sea texto | Como número, Excel lo muestra `7,04171E+13`. El valor sobrevive —14 dígitos entran en los 15 de precisión— pero el usuario no puede leer el único campo que abriría el archivo para chequear. Nadie suma esta columna, así que ser número no aporta nada y cuesta eso |
+| Una razón social que empieza con `=`, `+`, `-` o `@` | Tabulador adelante | La planilla ejecuta esa celda como fórmula al abrir el archivo. Es la vía por la que un CSV se convierte en una forma de correr algo en la máquina de quien lo descarga |
 
-Lo que los tests **no** prueban es el criterio de aceptación: que el
-archivo abra limpio en un Excel real. Eso necesita un Excel real. Lo que
-sí prueban es que los bytes lleven lo que Excel necesita para hacerlo.
+**Sobre el tabulador, que no era la primera opción.** El consejo habitual
+es un apóstrofe adelante. **No funciona:** Excel honra el `'` cuando
+alguien tipea en una celda, no cuando parsea un CSV, así que queda
+visible en el archivo. Entrecomillar tampoco hace nada — las comillas son
+sintaxis CSV y se sacan antes de decidir el tipo. La tercera opción,
+`="70417054367476"`, sí anda y se descartó por dos razones: es una
+fórmula, y le pone `="70417054367476"` adelante a cualquier software
+contable, que es la única razón por la que esa columna existe. El
+tabulador deja los dígitos detrás de un espacio que un `trim()` saca.
+
+Las tres se probaron abriendo el archivo en un Excel real, que es el
+único lugar donde se pueden probar.
+
+> **El criterio de aceptación está cumplido y verificado a mano.** El
+> archivo abre en Excel con los importes como números sumables, las notas
+> de crédito en negativo, los acentos y eñes correctos, la razón social
+> con punto y coma en una sola celda y el CAE legible, sin tocar nada.
+> Los tests cubren que los bytes lleven lo que Excel necesita; que Excel
+> efectivamente lo haga es una verificación manual, y se repite si cambia
+> el formato.
 
 ### Observabilidad
 - Micrometer (Spring Boot Actuator) + `micrometer-registry-prometheus`

@@ -99,7 +99,7 @@ public class ComprobanteCsvWriter {
                 c.getCurrency(),
                 rate(c.getExchangeRate()),
                 amount(signedTotalOf(c)),
-                c.getCae());
+                identifier(c.getCae()));
     }
 
     /**
@@ -146,13 +146,52 @@ public class ComprobanteCsvWriter {
     }
 
     /**
+     * A number that is a name, not a quantity.
+     *
+     * <p>A CAE is fourteen digits. Written bare, Excel reads it as a
+     * number and shows {@code 7,04171E+13} — the value survives, because
+     * fourteen digits fit inside Excel's fifteen of precision, but the
+     * user cannot read the one field they would open the file to check.
+     * Nothing is ever summed down this column, so being a number buys
+     * nothing and costs that.
+     *
+     * <p>The leading tab is what makes Excel keep it as text, and it was
+     * picked over the two alternatives after watching all of them in a
+     * real Excel:
+     *
+     * <ul>
+     *   <li>quoting it does nothing — the quotes are CSV syntax, stripped
+     *       before Excel decides the type, and the cell is a number again;
+     *   <li>a leading apostrophe, the usual advice, <strong>is not
+     *       honoured on CSV import</strong>. It is a typing convention,
+     *       and the file shows a literal {@code '} in the cell;
+     *   <li>{@code ="…"} works, and is a formula. It would also put
+     *       {@code ="70417054367476"} in front of any accounting importer,
+     *       which is the one thing this column exists for.
+     * </ul>
+     *
+     * <p>The tab leaves the digits intact behind one whitespace character
+     * that {@code trim()} removes, which is the least a machine consumer
+     * can be asked to do.
+     */
+    private static String identifier(Long value) {
+        return value == null ? null : "\t" + value;
+    }
+
+    /**
      * Defuses a razón social that a spreadsheet would run as a formula.
      *
      * <p>A leading {@code =}, {@code +}, {@code -} or {@code @} turns the
      * cell into an expression when the file is opened, which is how a CSV
      * export becomes a way to run something on the machine of whoever
-     * downloads it. The leading quote makes Excel treat it as text and is
-     * not displayed.
+     * downloads it.
+     *
+     * <p>The same leading tab as above, and for a reason worth recording:
+     * the standard advice is a leading apostrophe, and <strong>it does not
+     * work here</strong>. Excel honours {@code '} when someone types into
+     * a cell, not when it parses a CSV — the apostrophe stays visible and
+     * the defence is both broken and ugly. The tab forces the cell to
+     * text, which is what stops the formula running.
      *
      * <p>Only free text goes through here. The numeric columns are written
      * by this class, and prefixing those would break every negative total.
@@ -162,7 +201,7 @@ public class ComprobanteCsvWriter {
             return value;
         }
         return switch (value.charAt(0)) {
-            case '=', '+', '-', '@', '\t', '\r' -> "'" + value;
+            case '=', '+', '-', '@', '\t', '\r' -> "\t" + value;
             default -> value;
         };
     }

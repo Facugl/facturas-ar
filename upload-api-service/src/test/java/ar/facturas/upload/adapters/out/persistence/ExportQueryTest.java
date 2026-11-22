@@ -104,6 +104,7 @@ class ExportQueryTest extends PostgresTest {
         data.setCurrency("PES");
         data.setExchangeRate(BigDecimal.ONE);
         data.setTotal(new BigDecimal("1000.00"));
+        data.setCae(70_417_054_367_476L);
         comprobantes.save(data);
         return new Comprobante(job, number);
     }
@@ -269,6 +270,8 @@ class ExportQueryTest extends PostgresTest {
                     .startsWith("﻿fecha;")
                     .contains("12/04/2031;6;Factura B;3;" + number + ";30-71234567-1;")
                     .contains("PANADERÍA LA ESPIGA S.A.;PES;1;1000,00;");
+            // The CAE leaves as text, or Excel renders it as 7,04171E+13.
+            assertThat(csv).contains(";\"\t70417054367476\"");
         }
 
         /** The BOM has to survive the whole stack, not just the writer. */

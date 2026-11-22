@@ -248,9 +248,31 @@ class ComprobanteCsvWriterTest {
         assertThat(firstRowOf(comprobante())).contains(";6;Factura B;");
     }
 
+    /**
+     * Fourteen digits behind a tab, which is what stops Excel showing the
+     * CAE as {@code 7,04171E+13}. Verified in a real Excel: quoting the
+     * field changes nothing and a leading apostrophe stays visible, so
+     * the tab is the only one of the three that both renders and leaves
+     * the digits recoverable with a {@code trim()}.
+     */
     @Test
-    void writesTheCae() {
-        assertThat(firstRowOf(comprobante())).endsWith(";70417054367476");
+    @DisplayName("the CAE is text, because it is a name and not a quantity")
+    void writesTheCaeAsTextSoExcelDoesNotRoundIt() {
+        String row = firstRowOf(comprobante());
+
+        // Quoted because the value opens with whitespace, which is CSV
+        // syntax and not part of it: any reader, Excel included, strips
+        // the quotes before deciding the type. What is left is a tab and
+        // fourteen digits.
+        assertThat(row).endsWith(";\"\t70417054367476\"");
+    }
+
+    @Test
+    void leavesTheCaeColumnEmptyWhenThereIsNoCae() {
+        var data = comprobante();
+        data.setCae(null);
+
+        assertThat(firstRowOf(data)).endsWith(";");
     }
 
     @Test
@@ -294,8 +316,15 @@ class ComprobanteCsvWriterTest {
 
         /**
          * A leading {@code =} makes the spreadsheet run the cell as a
-         * formula when the file is opened. The leading quote makes it
-         * text, and Excel does not display it.
+         * formula when the file is opened. The tab forces the cell to
+         * text, which is what stops it.
+         *
+         * <p>It used to be an apostrophe, which is the advice everywhere
+         * and <strong>does not work on CSV import</strong> — Excel honours
+         * {@code '} when someone types into a cell, not when it parses a
+         * file, so the only thing it achieved was a visible quote in the
+         * razón social. Checked in a real Excel, which is the only place
+         * this can be checked.
          */
         @ParameterizedTest(name = "[{index}] {0}")
         @ValueSource(strings = {
@@ -307,7 +336,7 @@ class ComprobanteCsvWriterTest {
             var data = comprobante();
             data.setIssuerBusinessName(name);
 
-            assertThat(firstRowOf(data)).contains("'" + name);
+            assertThat(firstRowOf(data)).contains("\t" + name);
         }
 
         @Test
@@ -315,7 +344,7 @@ class ComprobanteCsvWriterTest {
         void doesNotTouchANormalName() {
             assertThat(firstRowOf(comprobante()))
                     .contains(";ACME SERVICIOS S.R.L.;")
-                    .doesNotContain("'ACME");
+                    .doesNotContain("\tACME");
         }
     }
 
