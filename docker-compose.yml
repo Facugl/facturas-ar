@@ -109,7 +109,44 @@ services:
     ports:
       - "8080:8080"
 
-  # Scrapea /actuator/prometheus de la API.
+  # La cascada de extraccion, del otro lado de la cola.
+  #
+  # Es un deployable aparte por perfil de recursos, no por dominio
+  # (ADR 006): esta imagen carga los binarios nativos de OpenCV y quema
+  # CPU por documento, y la API no tiene por que cargar nada de eso.
+  #
+  # No expone puerto al host: no atiende a nadie. El 8081 es Actuator, y
+  # Prometheus lo alcanza por la red interna.
+  ocr-worker-service:
+    build:
+      context: .
+      dockerfile: ocr-worker-service/Dockerfile
+    container_name: facturas-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      s3:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      # Espera a la API porque el esquema lo migra ella (ADR 013): este
+      # servicio corre con ddl-auto: validate y no tiene Flyway, asi que
+      # arrancar primero significa fallar validando una base vacia.
+      #
+      # La topologia del broker NO esta en esta lista: los dos servicios
+      # la declaran, justamente para no depender del orden.
+      upload-api-service:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/facturas
+      SPRING_DATASOURCE_USERNAME: facturas
+      SPRING_DATASOURCE_PASSWORD: facturas
+      FACTURAS_STORAGE_ENDPOINT: http://s3:9090
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: facturas
+      SPRING_RABBITMQ_PASSWORD: facturas
+
+  # Scrapea /actuator/prometheus de los dos servicios.
   #
   # Entra ahora y no con los dashboards porque hay un numero que depende
   # de esto: el timeout del reaper son 10 minutos "generoso a proposito"
@@ -120,6 +157,8 @@ services:
     container_name: facturas-prometheus
     depends_on:
       upload-api-service:
+        condition: service_started
+      ocr-worker-service:
         condition: service_started
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro

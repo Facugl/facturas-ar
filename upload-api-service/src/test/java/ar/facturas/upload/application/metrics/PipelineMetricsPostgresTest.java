@@ -1,15 +1,10 @@
 package ar.facturas.upload.application.metrics;
 
-import ar.facturas.domain.enums.JobStatus;
-import ar.facturas.domain.enums.SourceType;
 import ar.facturas.domain.model.User;
 import ar.facturas.domain.port.DocumentStorage;
-import ar.facturas.extraction.ExtractionOrchestrator;
-import ar.facturas.extraction.ExtractionResult;
-import ar.facturas.upload.ContainersTest;
-import ar.facturas.infrastructure.persistence.JobRepository;
+import ar.facturas.infrastructure.persistence.OutboxEventRepository;
 import ar.facturas.infrastructure.persistence.UserRepository;
-import ar.facturas.upload.application.usecase.ExtractComprobante;
+import ar.facturas.upload.ContainersTest;
 import ar.facturas.upload.application.usecase.UploadComprobante;
 import ar.facturas.upload.application.usecase.UploadComprobanteCommand;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
@@ -20,20 +15,17 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-import java.time.Duration;
-import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 /**
- * The metrics, asserted on the exact text Prometheus is served.
+ * This service's metrics, asserted on the exact text Prometheus is
+ * served.
  *
  * <p><strong>A metric name is a contract</strong> — with a dashboard
  * panel, with an alert rule — and it is a contract that breaks silently:
@@ -45,9 +37,13 @@ import static org.mockito.Mockito.when;
  * rewrites every name on its way out: dots become underscores, a counter
  * gains {@code _total}, a timer becomes a family of
  * {@code _seconds_count} / {@code _seconds_sum} / {@code _seconds_bucket}.
- * {@code invoice.job.processing.time} is queried as
- * {@code invoice_job_processing_time_seconds}, and nothing in the Java
+ * {@code invoice.outbox.publish.latency} is queried as
+ * {@code invoice_outbox_publish_latency_seconds}, and nothing in the Java
  * code says so.
+ *
+ * <p>Only the metrics <em>this</em> service publishes are here. Anything
+ * about an extraction moved to {@code ocr-worker-service} with the
+ * extraction, and is pinned the same way in its own tests.
  *
  * <p>Scraped through {@link PrometheusMeterRegistry#scrape()} rather than
  * over HTTP, which produces the same bytes the endpoint serves without
@@ -57,39 +53,27 @@ import static org.mockito.Mockito.when;
 @SpringBootTest
 class PipelineMetricsPostgresTest extends ContainersTest {
 
-    private static final Duration PATIENCE = Duration.ofSeconds(20);
-
     /** Keeps file hashes unique across the class. */
     private static final AtomicLong SEQUENCE = new AtomicLong(20_000);
 
     @MockitoBean DocumentStorage storage;
-    @MockitoBean ExtractionOrchestrator orchestrator;
 
     @Autowired PrometheusMeterRegistry prometheus;
     @Autowired UploadComprobante upload;
-    @Autowired ExtractComprobante extractComprobante;
     @Autowired UserRepository users;
-    @Autowired JobRepository jobs;
+    @Autowired OutboxEventRepository outbox;
 
     @BeforeEach
     void setUp() {
         when(storage.store(any(), anyString())).thenReturn("documents/2026/11/stored.pdf");
-        when(storage.retrieve(anyString())).thenReturn("%PDF-1.4 irrelevante".getBytes());
-        when(orchestrator.extract(any())).thenReturn(new ExtractionResult(
-                Map.of(), List.of(), SourceType.PDF_TEXT, false, null, null));
     }
 
-    private UUID anUploadThatGetsExtracted() {
+    private UUID anUpload() {
         User user = users.save(new User(
                 UUID.randomUUID(), UUID.randomUUID() + "@test.ar", "no-auth-yet"));
-        UUID jobId = upload.execute(new UploadComprobanteCommand(
+        return upload.execute(new UploadComprobanteCommand(
                 user.getId(), "factura.pdf", "application/pdf",
                 ("%PDF-1.4 " + SEQUENCE.incrementAndGet()).getBytes())).jobId();
-
-        await().atMost(PATIENCE).untilAsserted(() ->
-                assertThat(jobs.findById(jobId).orElseThrow().getStatus())
-                        .isEqualTo(JobStatus.EXTRACTED));
-        return jobId;
     }
 
     /**
@@ -104,84 +88,60 @@ class PipelineMetricsPostgresTest extends ContainersTest {
         assertThat(prometheus.scrape()).contains("invoice_outbox_pending");
     }
 
+    /**
+     * The delay the outbox introduces, measured from when the event
+     * happened rather than from the start of the relay's run. It is near
+     * zero when the upload's fast path publishes and up to a sweep
+     * interval when the sweep does, and the two are the same metric on
+     * purpose: a long tail is exactly what says the fast path is missing.
+     */
     @Test
-    @DisplayName("una subida deja medido todo el camino: latencia del relay, tiempo de proceso y deteccion de QR")
-    void oneUploadLeavesTheWholePathMeasured() {
-        anUploadThatGetsExtracted();
+    @DisplayName("una subida deja medida la latencia del relay")
+    void oneUploadMeasuresTheRelay() {
+        UUID jobId = anUpload();
+        assertThat(outbox.findByAggregateId(jobId)).hasSize(1);
 
         String scrape = prometheus.scrape();
 
+        assertThat(scrape).contains("invoice_outbox_publish_latency_seconds_count");
         assertThat(scrape)
-                .as("the delay the outbox introduces, which is what says the relay is healthy")
-                .contains("invoice_outbox_publish_latency_seconds_count");
-
-        assertThat(scrape)
-                .as("the number the reaper's timeout is supposed to come from")
-                .contains("invoice_job_processing_time_seconds_count")
-                .contains("outcome=\"extracted\"");
-
-        assertThat(scrape)
-                .as("ADR 009 asks for this one tagged by who read the QR")
-                .contains("invoice_qr_detection_total")
-                // The stubbed cascade finds no QR, so this is the honest value.
-                .contains("source=\"ninguno\"");
-    }
-
-    /**
-     * The histogram is what makes the timer worth having. A mean hides
-     * exactly the case the reaper's timeout has to survive — the slow
-     * scanned PDF — so the cutoff has to be chosen from a percentile, and
-     * a percentile needs buckets published.
-     */
-    @Test
-    @DisplayName("el tiempo de proceso publica histograma, no solo un promedio")
-    void theProcessingTimerPublishesBuckets() {
-        anUploadThatGetsExtracted();
-
-        assertThat(prometheus.scrape())
-                .contains("invoice_job_processing_time_seconds_bucket");
+                .as("a mean would hide the case worth seeing, which is the slow one")
+                .contains("invoice_outbox_publish_latency_seconds_bucket");
     }
 
     /**
      * Pins the translation Micrometer performs, because it is invisible
      * in the Java code and it is what a dashboard query has to be written
-     * against: dots to underscores, {@code _total} on a counter,
-     * {@code _seconds} on a timer.
+     * against.
      */
     @Test
     @DisplayName("los nombres salen traducidos, y asi es como hay que consultarlos")
     void theExposedNamesAreNotTheJavaNames() {
-        anUploadThatGetsExtracted();
+        anUpload();
 
         String scrape = prometheus.scrape();
 
         assertThat(scrape)
-                .as("dots become underscores, and a counter gains _total")
-                .contains("invoice_qr_detection_total")
-                .doesNotContain("invoice.qr.detection");
-        assertThat(scrape)
                 .as("a timer is a family, and its unit lands in the name")
-                .contains("invoice_job_processing_time_seconds_sum");
+                .contains("invoice_outbox_publish_latency_seconds_sum")
+                .doesNotContain("invoice.outbox.publish.latency");
     }
 
     /**
-     * Not an error — at-least-once delivery means a duplicate is
-     * expected — but worth counting. A flat zero would mean the
-     * idempotency has never been exercised, which is worth knowing before
-     * trusting it.
+     * The metrics that used to be asserted here and are not any more.
+     * They are not gone — they moved to the worker with the work — and
+     * this service must not be publishing them, or there would be two
+     * homes for one name and a series that splits in two.
      */
     @Test
-    @DisplayName("una reentrega absorbida por el claim queda contada")
-    void aDeliveryTheClaimRefusesIsCounted() {
-        UUID jobId = anUploadThatGetsExtracted();
+    @DisplayName("las metricas de extraccion ya NO salen de este servicio: se fueron con el worker")
+    void theExtractionMetricsAreNotPublishedHereAnyMore() {
+        anUpload();
 
-        // Ask for the work again on a job that is no longer claimable,
-        // which is what an at-least-once transport eventually does.
-        extractComprobante.execute(jobId);
-
-        assertThat(prometheus.scrape()).contains("invoice_job_duplicate_delivery_total");
-        assertThat(jobs.findById(jobId).orElseThrow().getStatus())
-                .as("and it really was refused rather than processed again")
-                .isEqualTo(JobStatus.EXTRACTED);
+        assertThat(prometheus.scrape())
+                .doesNotContain("invoice_job_processing_time")
+                .doesNotContain("invoice_qr_detection")
+                .doesNotContain("invoice_extraction_source")
+                .doesNotContain("invoice_job_duplicate_delivery");
     }
 }

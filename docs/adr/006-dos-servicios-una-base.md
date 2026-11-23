@@ -1,6 +1,6 @@
 # 006 — Dos servicios sobre una base: por qué no son microservicios
 
-**Estado:** aceptada
+**Estado:** aceptada · **implementada** (2026-11-23)
 **Fecha:** 2026-10-17
 
 ## Contexto
@@ -41,6 +41,12 @@ independientes dejaría de serlo.
 
 **`shared-domain` existe por esto.** Las entidades viven en un módulo
 común porque los dos servicios las usan contra la misma base.
+
+> **Y era la mitad de la frase.** Al implementar la separación quedó
+> claro que las entidades no son lo único compartido: los repositorios
+> también, el adapter de S3 también —la API guarda el archivo y el worker
+> lo lee— y la topología del broker también. De ahí salió
+> `shared-infrastructure` y el [ADR 013](013-los-repositorios-son-compartidos.md).
 
 ## Cuándo habría que revisarla
 

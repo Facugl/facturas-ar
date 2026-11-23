@@ -3,7 +3,7 @@ package ar.facturas.upload.adapters.in.messaging;
 import ar.facturas.infrastructure.persistence.OutboxEventRepository;
 import ar.facturas.upload.application.metrics.PipelineMetrics;
 import ar.facturas.upload.application.usecase.RequeueJob;
-import ar.facturas.upload.config.RabbitTopology;
+import ar.facturas.infrastructure.messaging.RabbitTopology;
 import com.rabbitmq.client.Channel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

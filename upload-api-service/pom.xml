@@ -32,12 +32,6 @@
       <groupId>ar.facturas</groupId>
       <artifactId>shared-events</artifactId>
     </dependency>
-    <!-- Fase 1: la API corre la cascada en el request.
-         Fase 2: esta dependencia se va, la hereda el worker. -->
-    <dependency>
-      <groupId>ar.facturas</groupId>
-      <artifactId>extraction</artifactId>
-    </dependency>
 
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -148,6 +142,23 @@
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <!--
+            El jar ejecutable sale con clasificador y el jar comun queda
+            como artefacto principal.
+
+            Por defecto `repackage` REEMPLAZA el artefacto principal por
+            el ejecutable, y un jar ejecutable no sirve como dependencia:
+            sus clases viven en BOOT-INF/classes y nadie las ve. Eso
+            rompia la unica prueba automatica del criterio 8, que necesita
+            levantar los dos servicios (ver el pom del worker).
+
+            Consecuencia practica: el jar para correr es
+            upload-api-service-<version>-boot.jar, no el que no tiene
+            sufijo. El Dockerfile lo copia por nombre exacto por eso.
+          -->
+          <classifier>boot</classifier>
+        </configuration>
       </plugin>
     </plugins>
   </build>

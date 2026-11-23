@@ -1,15 +1,12 @@
 package ar.facturas.upload.application.outbox;
 
 import ar.facturas.domain.enums.JobStatus;
-import ar.facturas.domain.enums.SourceType;
 import ar.facturas.domain.model.Document;
 import ar.facturas.domain.model.Job;
 import ar.facturas.domain.model.OutboxEvent;
 import ar.facturas.domain.model.User;
 import ar.facturas.domain.port.DocumentStorage;
 import ar.facturas.events.JobExtractionRequested;
-import ar.facturas.extraction.ExtractionOrchestrator;
-import ar.facturas.extraction.ExtractionResult;
 import ar.facturas.upload.ContainersTest;
 import ar.facturas.infrastructure.persistence.DocumentRepository;
 import ar.facturas.infrastructure.persistence.JobRepository;
@@ -29,9 +26,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
-import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -40,7 +35,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -65,23 +59,23 @@ import static org.mockito.Mockito.when;
  *       and it is only true if the row survived a commit.</li>
  * </ul>
  *
- * <p>The transport is a real RabbitMQ, so the whole chain runs: the
- * upload's transaction, the relay, the broker, and the consumer. What
- * the broker specifically does with a message — redelivery without an
- * ack, the dead-letter queue, the publisher confirmation — is
- * {@code RabbitMessagingTest}'s subject, not this one's.
+ * <p>The transport is a real RabbitMQ, so the relay really hands the
+ * event to a broker and really waits to be told it arrived. What the
+ * broker then does with the message is somebody else's subject: the
+ * message's shape belongs to {@code RabbitMessagingTest}, and what a
+ * consumer makes of it belongs to {@code ocr-worker-service}, which is
+ * where the consumer now lives.
  *
- * <p><strong>The extraction is asynchronous now</strong>, which is the
- * point of the queue: the relay's job ends when the broker confirms the
- * message, and the consumer runs on its own thread afterwards. So
- * anything about the job's state is awaited rather than asserted
- * directly — asserting it on the next line would be a race that passes
- * on a fast machine.
+ * <p><strong>Nothing here asserts that a job gets extracted</strong>,
+ * and that is the shape of the split rather than a gap: this service
+ * publishes a request and its responsibility ends when the broker
+ * confirms it. The far end of that road is the worker's
+ * {@code EndToEndTest}, which is the only place that can boot both
+ * halves.
  *
- * <p>Two things are stubbed, both outside the boundary under test: object
- * storage, whose real adapter reaches for a bucket as it starts, and the
- * extraction cascade, so the assertions are about a message arriving
- * rather than about parsing a PDF.
+ * <p>Object storage is stubbed, because its real adapter reaches for a
+ * bucket as it starts. Nothing else needs to be: the extraction cascade
+ * is not on this service's classpath any more.
  *
  * <p>No transaction wraps these tests — one would hide the very commits
  * being tested. Isolation comes from clearing the outbox before each test
@@ -94,7 +88,6 @@ class OutboxPostgresTest extends ContainersTest {
     private static final AtomicLong SEQUENCE = new AtomicLong(1_000);
 
     @MockitoBean DocumentStorage storage;
-    @MockitoBean ExtractionOrchestrator orchestrator;
 
     @Autowired OutboxEventRepository outbox;
     @Autowired UserRepository users;
@@ -113,11 +106,6 @@ class OutboxPostgresTest extends ContainersTest {
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         outbox.deleteAll();
         when(storage.store(any(), anyString())).thenReturn("documents/2026/11/stored.pdf");
-        // The consumer fetches the file before parsing it. The bytes are
-        // never looked at — the cascade is stubbed — but they have to
-        // exist, or the extraction fails on a null and the job lands in
-        // FAILED for a reason that has nothing to do with the outbox.
-        when(storage.retrieve(anyString())).thenReturn("%PDF-1.4 irrelevante".getBytes());
     }
 
     // ── Fixtures ──────────────────────────────────────────────────────
@@ -160,12 +148,6 @@ class OutboxPostgresTest extends ContainersTest {
         return jobs.findById(jobId).orElseThrow().getStatus();
     }
 
-    /** The extraction cascade, stubbed down to "it ran and found nothing". */
-    private void extractionFindsNothing() {
-        when(orchestrator.extract(any())).thenReturn(new ExtractionResult(
-                Map.of(), List.of(), SourceType.PDF_TEXT, false, null, null));
-    }
-
     private UploadComprobanteCommand uploadOf(User user) {
         return new UploadComprobanteCommand(
                 user.getId(), "factura.pdf", "application/pdf",
@@ -202,8 +184,6 @@ class OutboxPostgresTest extends ContainersTest {
          */
         @Test
         void aCommittedUploadAlwaysHasItsEvent() {
-            extractionFindsNothing();
-
             var result = upload.execute(uploadOf(someone()));
 
             OutboxEvent event = eventOf(result.jobId());
@@ -214,7 +194,6 @@ class OutboxPostgresTest extends ContainersTest {
         @Test
         @DisplayName("una subida duplicada no escribe un evento nuevo: el trabajo ya se hizo")
         void aDuplicateUploadWritesNoEvent() {
-            extractionFindsNothing();
             var command = uploadOf(someone());
 
             var first = upload.execute(command);
@@ -237,8 +216,6 @@ class OutboxPostgresTest extends ContainersTest {
         @Test
         @DisplayName("la subida lo despierta: el evento sale sin esperar el barrido")
         void theFastPathPublishesBeforeAnySweep() {
-            extractionFindsNothing();
-
             var result = upload.execute(uploadOf(someone()));
 
             assertThat(eventOf(result.jobId()).getPublishedAt()).isNotNull();
@@ -253,8 +230,6 @@ class OutboxPostgresTest extends ContainersTest {
         @Test
         @DisplayName("un evento que el camino rapido no publico sale igual despues")
         void publishesAnEventTheFastPathNeverGotTo() {
-            extractionFindsNothing();
-
             UUID jobId = pendingJobWithItsEvent(someone());
             assertThat(statusOf(jobId)).isEqualTo(JobStatus.PENDING);
             assertThat(outbox.countByPublishedAtIsNull()).isEqualTo(1);
@@ -262,19 +237,21 @@ class OutboxPostgresTest extends ContainersTest {
             assertThat(relay.drain()).isEqualTo(1);
 
             assertThat(eventOf(jobId).getPublishedAt()).isNotNull();
+            assertThat(outbox.countByPublishedAtIsNull()).isZero();
 
-            // And it really reached the consumer, which now happens on
-            // the broker's schedule rather than on this thread's.
-            await().atMost(Duration.ofSeconds(15))
-                    .untilAsserted(() -> assertThat(statusOf(jobId))
-                            .isEqualTo(JobStatus.EXTRACTED));
+            // The job is still PENDING, and that is correct here. This
+            // service published a request; whether anything picks it up
+            // is not its business any more. Before the worker was split
+            // out, this same test went on to assert EXTRACTED — which it
+            // could only do because the consumer happened to be in the
+            // same process. That end of the road is now the worker's
+            // EndToEndTest.
+            assertThat(statusOf(jobId)).isEqualTo(JobStatus.PENDING);
         }
 
         @Test
         @DisplayName("un evento ya publicado no se vuelve a publicar")
         void doesNotRepublishWhatItAlreadyPublished() {
-            extractionFindsNothing();
-
             upload.execute(uploadOf(someone()));
 
             assertThat(relay.drain()).isZero();
@@ -386,7 +363,6 @@ class OutboxPostgresTest extends ContainersTest {
         @Test
         @DisplayName("se guarda como jsonb y llega al consumidor igual que salio")
         void survivesPostgresAndTheSerializer() {
-            extractionFindsNothing();
             when(storage.store(any(), anyString()))
                     .thenReturn("documents/2026/11/round-trip.pdf");
 
@@ -412,8 +388,6 @@ class OutboxPostgresTest extends ContainersTest {
         @Test
         @DisplayName("no lleva sourceType ni userId: uno no se sabe todavia, el otro no le toca al worker")
         void carriesNothingTheUploadCouldNotKnow() {
-            extractionFindsNothing();
-
             var result = upload.execute(uploadOf(someone()));
 
             assertThat(eventOf(result.jobId()).getPayload())

@@ -1,4 +1,4 @@
-# 013 — Los repositorios y el adapter de S3 son compartidos, no duplicados
+# 013 — La base, el bucket y la topología del broker son compartidos, no duplicados
 
 **Estado:** aceptada · implementada
 **Fecha:** 2026-11-23
@@ -32,7 +32,8 @@ almacenamiento. **Una base, un mapeo de esa base.**
 ```
 shared-domain          entidades, value objects, enums. Cero framework
 shared-events          contratos de los mensajes. Cero dependencias
-shared-infrastructure  repositorios + adapter de S3. Spring, a proposito
+shared-infrastructure  repositorios + adapter de S3 + topologia del
+                       broker. Spring, a proposito
 ```
 
 Cada servicio hace `@Import(SharedInfrastructure.class)` y recibe el
@@ -70,6 +71,22 @@ API. Dos servicios compitiendo por migrar la misma base al arrancar es,
 en el mejor caso, contención de locks. El worker corre con
 `ddl-auto: validate` y confía en que el esquema ya está.
 
+**La topología del broker, en cambio, la declaran los dos** — y la
+diferencia con Flyway es el punto. Declarar un exchange es idempotente y
+sin estado; una migración es una secuencia ordenada de cambios y dos
+corriendo a la vez es peligroso de verdad. Misma pregunta, respuesta
+distinta, porque las operaciones son distintas en especie.
+
+> **Esto empezó al revés y se corrigió al primer test.** La topología
+> vivía en la API, con el argumento de que dos servicios declarando la
+> misma cosa con argumentos posiblemente distintos es una falla de
+> arranque esperando a pasar. La premisa estaba mal: los argumentos salen
+> de **una sola clase** que los dos importan, así que no pueden diferir.
+> Lo que el dueño único sí costaba era real — el worker no arrancaba
+> contra un broker donde la API no hubiera corrido, que en un test es un
+> contexto que no levanta y en producción es un crash loop hasta que la
+> API aparece.
+
 **El costo real:** un cambio de esquema afecta a los dos servicios, y
 ahora también un cambio de repositorio. El ADR 006 ya aceptó ese costo —
 *"con un solo desarrollador es irrelevante; con equipos independientes
@@ -87,7 +104,33 @@ y los tests de cada módulo siguen pasando.
 **Los repositorios en `shared-domain`.** Es a donde apunta la línea del
 ADR 006 leída literalmente, y rompe lo único que ese módulo promete.
 
-**Un modulo por recurso: `shared-persistence` y `shared-storage`.** Más
-preciso y dos módulos para ocho clases. La regla que los une es una sola
-—"los recursos que los dos servicios comparten"— así que entran juntos
-hasta que haya un motivo para separarlos.
+**Un modulo por recurso: `shared-persistence`, `shared-storage` y
+`shared-messaging`.** Más preciso, y tres módulos para nueve clases. La
+regla que los une es una sola —"cómo se llega a los recursos que los dos
+servicios comparten"— así que entran juntos hasta que haya un motivo
+para separarlos.
+
+## Nota sobre el dependencia de test del worker a la API
+
+Separar el worker partió en dos la única prueba automática del
+**criterio de aceptación 8**: la API publica y el worker consume, así que
+ningún módulo solo puede demostrar el camino completo. La alternativa era
+degradarlo a una verificación manual contra `docker compose`, y es el
+criterio que el proyecto señala para justificar que la cola exista.
+
+Así que `ocr-worker-service` tiene una dependencia **de test** a
+`upload-api-service`, y un solo test —`EndToEndTest`— levanta los dos
+contextos. La flecha va en esa dirección porque la API no depende del
+worker; al revés sería un ciclo. Nada de `src/main` cruza esa línea.
+
+Eso obligó a dos cosas que vale anotar:
+
+- **El jar ejecutable de la API lleva clasificador** (`-boot`). Por
+  defecto `repackage` reemplaza el artefacto principal por el ejecutable,
+  y un jar ejecutable no sirve como dependencia: sus clases viven en
+  `BOOT-INF/classes` y nadie las ve.
+- **Dos módulos con `application.yml` compiten.** Cuando `EndToEndTest`
+  levanta los dos contextos, Spring lee uno solo de los dos archivos, así
+  que las propiedades de la API hay que repetirlas en la configuración
+  del test. Se descubre como un placeholder sin resolver, que es una
+  forma oscura de enterarse.

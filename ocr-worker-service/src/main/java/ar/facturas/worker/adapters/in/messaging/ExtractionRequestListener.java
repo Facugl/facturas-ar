@@ -1,10 +1,9 @@
-package ar.facturas.upload.adapters.in.messaging;
+package ar.facturas.worker.adapters.in.messaging;
 
 import ar.facturas.events.EventEnvelope;
 import ar.facturas.events.JobExtractionRequested;
-import ar.facturas.upload.adapters.out.messaging.RabbitOutboxPublisher;
-import ar.facturas.upload.application.usecase.ExtractComprobante;
-import ar.facturas.upload.config.RabbitTopology;
+import ar.facturas.events.Topology;
+import ar.facturas.worker.application.ExtractComprobante;
 import com.rabbitmq.client.Channel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,7 +52,7 @@ import java.util.UUID;
  * message that will fail the same way is a hot loop — it would be
  * redelivered as fast as the broker can manage, forever.
  *
- * @see RabbitTopology
+ * @see Topology
  */
 @Component
 @RequiredArgsConstructor
@@ -65,7 +64,7 @@ public class ExtractionRequestListener {
     /** Jackson 3, which is what Spring Boot 4 autoconfigures. See {@code Outbox}. */
     private final JsonMapper json;
 
-    @RabbitListener(queues = RabbitTopology.QUEUE)
+    @RabbitListener(queues = Topology.QUEUE)
     public void on(Message message, Channel channel) throws IOException {
         long deliveryTag = message.getMessageProperties().getDeliveryTag();
         boolean redelivered = message.getMessageProperties().isRedelivered();
@@ -123,7 +122,9 @@ public class ExtractionRequestListener {
 
     /**
      * Rebuilds the envelope from the AMQP properties the publisher put it
-     * in. The mapping is documented on {@link RabbitOutboxPublisher}.
+     * in. The mapping is the contract, and it is documented in
+     * <a href="../../../../../../../../docs/adr/011-el-envelope-viaja-en-las-propiedades-de-amqp.md">ADR 011</a>
+     * — this service never sees the code that writes it.
      */
     private static EventEnvelope envelopeOf(Message message) {
         MessageProperties properties = message.getMessageProperties();
@@ -146,7 +147,7 @@ public class ExtractionRequestListener {
      * field exists to prevent.
      */
     private static int versionOf(MessageProperties properties) {
-        Object header = properties.getHeader(RabbitOutboxPublisher.VERSION_HEADER);
+        Object header = properties.getHeader(Topology.VERSION_HEADER);
         return header instanceof Number version ? version.intValue() : 0;
     }
 }

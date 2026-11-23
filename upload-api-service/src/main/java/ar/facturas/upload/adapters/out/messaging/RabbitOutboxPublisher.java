@@ -1,8 +1,9 @@
 package ar.facturas.upload.adapters.out.messaging;
 
 import ar.facturas.events.EventEnvelope;
+import ar.facturas.events.Topology;
 import ar.facturas.upload.application.outbox.OutboxPublisher;
-import ar.facturas.upload.config.RabbitTopology;
+import ar.facturas.infrastructure.messaging.RabbitTopology;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
@@ -61,7 +62,8 @@ import java.util.Date;
 @Slf4j
 public class RabbitOutboxPublisher implements OutboxPublisher {
 
-    public static final String VERSION_HEADER = "eventVersion";
+    /** The contract's name for it; kept here as an alias for readability. */
+    public static final String VERSION_HEADER = Topology.VERSION_HEADER;
 
     /**
      * How long to wait for the broker to confirm.

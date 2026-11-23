@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>ar.facturas</groupId>
+    <artifactId>facturas-ar</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>ocr-worker-service</artifactId>
+  <name>ocr-worker-service</name>
+  <description>Consume la cola y corre la cascada de extraccion.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>ar.facturas</groupId>
+      <artifactId>shared-domain</artifactId>
+    </dependency>
+    <!-- Los nombres de la cola y la forma del mensaje. Lo unico que este
+         servicio comparte con la API, y a proposito: no importa una sola
+         clase de upload-api-service. -->
+    <dependency>
+      <groupId>ar.facturas</groupId>
+      <artifactId>shared-events</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>ar.facturas</groupId>
+      <artifactId>shared-infrastructure</artifactId>
+    </dependency>
+    <!-- La cascada. Esta dependencia salio de upload-api-service y entro
+         aca: eso es todo lo que significa "mover el pipeline detras de la
+         cola". El modulo extraction no cambio una linea. -->
+    <dependency>
+      <groupId>ar.facturas</groupId>
+      <artifactId>extraction</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+    <!--
+      Web, en un servicio que no atiende requests de nadie.
+
+      Es para Actuator: /actuator/health le dice a Docker si el worker
+      esta vivo, y /actuator/prometheus es por donde salen las metricas
+      de extraccion. Sin un servidor HTTP no hay por donde scrapearlas, y
+      un worker sin metricas es exactamente el problema que la Fase 3
+      vino a arreglar.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <!--
+      Sin Flyway, y es deliberado. El esquema tiene un dueño y es la API.
+      Dos servicios compitiendo por migrar la misma base al arrancar es,
+      en el mejor caso, contencion de locks. El worker corre con
+      ddl-auto: validate y confia en que el esquema ya esta — y si no
+      esta, falla al arrancar diciendolo, que es lo correcto.
+    -->
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-testcontainers</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-rabbitmq</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      En scope TEST, y solo para un test.
+
+      Separar el worker parte en dos la unica prueba automatica del
+      criterio de aceptacion 8: la API publica y el worker consume, asi
+      que ningun modulo solo puede demostrar el camino completo. La
+      alternativa era degradar ese test a una verificacion manual, y es
+      el criterio que justifica toda la mensajeria — no es el que conviene
+      dejar sin red.
+
+      Asi que `EndToEndTest` levanta los dos contextos. La flecha va en
+      esta direccion porque upload-api-service no depende del worker:
+      agregarla al reves seria un ciclo.
+
+      Flyway entra por aca, y por eso los tests del worker tienen esquema.
+    -->
+    <dependency>
+      <groupId>ar.facturas</groupId>
+      <artifactId>upload-api-service</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+
+</project>

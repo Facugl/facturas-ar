@@ -73,5 +73,18 @@ jobs:
           context: .
           file: upload-api-service/Dockerfile
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      # Las dos imagenes, porque las dos listan los modulos del pom padre
+      # y las dos se rompen igual cuando falta uno. Y con `scope`
+      # distinto: comparten la clave del cache de gha, asi que sin eso una
+      # le pisa el cache a la otra en cada corrida.
+      - name: Construir ocr-worker-service
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ocr-worker-service/Dockerfile
+          push: false
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker

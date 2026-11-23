@@ -35,10 +35,26 @@
       <groupId>ar.facturas</groupId>
       <artifactId>shared-domain</artifactId>
     </dependency>
+    <!-- Los nombres de la topologia: son parte del contrato, no de la
+         configuracion de un servicio. Ver Topology. -->
+    <dependency>
+      <groupId>ar.facturas</groupId>
+      <artifactId>shared-events</artifactId>
+    </dependency>
 
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+
+    <!-- La topologia del broker: los dos servicios la declaran, porque
+         declarar es idempotente y los argumentos salen de una sola clase.
+         No es como Flyway, donde el esquema tiene un solo dueno a
+         proposito: una migracion es una secuencia ordenada de cambios y
+         dos corriendo a la vez es peligroso de verdad. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
     </dependency>
 
     <!-- El almacenamiento va por el SDK de S3: el dia que esto apunte a

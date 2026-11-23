@@ -1,6 +1,15 @@
-# Scrapeo de la API. Un solo target por ahora; cuando el worker sea un
-# servicio aparte se agrega al mismo job y las series quedan separadas
-# por la etiqueta `instance` sin tocar ninguna consulta.
+# Scrapeo de los dos servicios.
+#
+# Un solo job con dos targets, no dos jobs. Las series quedan separadas
+# por la etiqueta `instance`, asi que una consulta como
+# `sum(invoice_qr_detection_total)` sigue funcionando sin saber cuantos
+# procesos hay — y el dia que el worker escale a varias replicas, se
+# agregan targets y tampoco cambia nada.
+#
+# Las metricas NO se superponen: cada servicio publica las de su propio
+# trabajo (invoice.outbox.* y invoice.recovery.* la API,
+# invoice.job.* y invoice.qr.* el worker), asi que ninguna serie se suma
+# dos veces.
 
 global:
   # Cada 15s. Las métricas de este sistema son de eventos discretos
@@ -20,3 +29,6 @@ scrape_configs:
       - targets: ["upload-api-service:8080"]
         labels:
           service: upload-api
+      - targets: ["ocr-worker-service:8081"]
+        labels:
+          service: ocr-worker

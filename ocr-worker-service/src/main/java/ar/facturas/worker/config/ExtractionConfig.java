@@ -1,4 +1,4 @@
-package ar.facturas.upload.config;
+package ar.facturas.worker.config;
 
 import ar.facturas.extraction.ExtractionOrchestrator;
 import ar.facturas.extraction.ExtractionStrategy;

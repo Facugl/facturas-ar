@@ -25,31 +25,50 @@ RUN chmod +x mvnw
 # Primero SOLO los poms. Esta capa se invalida únicamente cuando cambia
 # una dependencia, así que editar código Java no vuelve a descargar medio
 # Maven Central.
+#
+# TODOS los modulos del pom padre, incluso los que esta imagen no usa: el
+# reactor de Maven no puede ni LEER el proyecto si falta un directorio
+# que el padre declara como modulo.
 COPY pom.xml .
 COPY shared-domain/pom.xml shared-domain/
 COPY shared-events/pom.xml shared-events/
+COPY shared-infrastructure/pom.xml shared-infrastructure/
 COPY extraction/pom.xml extraction/
 COPY upload-api-service/pom.xml upload-api-service/
-RUN ./mvnw -B -q dependency:go-offline -DexcludeArtifactIds=shared-domain,shared-events,extraction || true
+COPY ocr-worker-service/pom.xml ocr-worker-service/
+
+# SIN `|| true`, y eso es un arreglo.
+#
+# Lo tenia, y escondia exactamente el problema que esta lista provoca:
+# cuando nacio shared-infrastructure, este paso empezo a fallar con
+# "Child module does not exist", el `|| true` se lo comio, el `package`
+# de mas abajo fallo tambien, y compose se quedo con la imagen anterior
+# SIN decir nada. Resultado: la API corriendo codigo de tres horas antes
+# mientras yo verificaba metricas contra ella.
+#
+# Ahora un modulo que falte en esta lista rompe el build acá, fuerte, en
+# el paso mas barato.
+RUN ./mvnw -B -q dependency:go-offline       -DexcludeArtifactIds=shared-domain,shared-events,shared-infrastructure,extraction
 
 # Ahora el código. A partir de acá sí se recompila en cada cambio.
 #
 # Se copian los directorios de módulo enteros y no sus src/ porque un
 # módulo recién creado todavía no tiene src/ y `COPY` falla si la ruta no
-# existe. Le pasaba a `extraction` cuando era solo un pom; se deja así
-# para que agregar el próximo módulo no vuelva a romper el build.
+# existe. Le pasaba a `extraction` cuando era solo un pom.
 #
-# Y aun así se rompió: `shared-events` nació con el outbox y esta lista
-# no se actualizó, asi que la imagen no compilaba mientras el jar en el
-# host sí. El build de la imagen hay que correrlo, no suponerlo.
+# Esta lista se olvidó dos veces: con `shared-events` y con
+# `shared-infrastructure`. Las dos veces la imagen quedó vieja en
+# silencio. La red ahora es el `RUN` de arriba, que falla sin `|| true`.
 COPY shared-domain shared-domain
 COPY shared-events shared-events
+COPY shared-infrastructure shared-infrastructure
 COPY extraction extraction
 COPY upload-api-service upload-api-service
+COPY ocr-worker-service ocr-worker-service
 
 # Los tests ya corrieron en CI; repetirlos acá solo alarga el build de la
 # imagen. Si querés que el build falle ante un test roto, sacá -DskipTests.
-RUN ./mvnw -B -q clean package -DskipTests
+RUN ./mvnw -B -q clean package -DskipTests -pl upload-api-service -am
 
 # ──────────────────────────────────────────────────────────────────────
 #  Etapa 2 — separar el jar en capas
@@ -71,7 +90,10 @@ RUN ./mvnw -B -q clean package -DskipTests
 # código propio reconstruye unos pocos MB en vez de 208.
 FROM eclipse-temurin:21-jdk AS layers
 WORKDIR /layers
-COPY --from=build /build/upload-api-service/target/*.jar app.jar
+# El `-boot.jar`, no `*.jar`: desde que el jar ejecutable lleva
+# clasificador hay DOS jars en target/ y el comodin tomaria cualquiera —
+# probablemente el que no arranca.
+COPY --from=build /build/upload-api-service/target/*-boot.jar app.jar
 # A un subdirectorio: `extract` exige que el destino esté vacío, y el
 # directorio actual ya contiene app.jar.
 RUN java -Djarmode=tools -jar app.jar extract --layers --launcher --destination extracted

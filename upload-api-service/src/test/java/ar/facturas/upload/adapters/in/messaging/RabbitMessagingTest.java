@@ -1,13 +1,10 @@
 package ar.facturas.upload.adapters.in.messaging;
 
 import ar.facturas.domain.enums.JobStatus;
-import ar.facturas.domain.enums.SourceType;
 import ar.facturas.domain.model.OutboxEvent;
 import ar.facturas.domain.model.User;
 import ar.facturas.domain.port.DocumentStorage;
 import ar.facturas.events.JobExtractionRequested;
-import ar.facturas.extraction.ExtractionOrchestrator;
-import ar.facturas.extraction.ExtractionResult;
 import ar.facturas.upload.ContainersTest;
 import ar.facturas.upload.adapters.out.messaging.RabbitOutboxPublisher;
 import ar.facturas.infrastructure.persistence.JobRepository;
@@ -15,7 +12,7 @@ import ar.facturas.infrastructure.persistence.OutboxEventRepository;
 import ar.facturas.infrastructure.persistence.UserRepository;
 import ar.facturas.upload.application.usecase.UploadComprobante;
 import ar.facturas.upload.application.usecase.UploadComprobanteCommand;
-import ar.facturas.upload.config.RabbitTopology;
+import ar.facturas.infrastructure.messaging.RabbitTopology;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -64,15 +61,18 @@ import static org.mockito.Mockito.when;
  * it is why every assertion about an outcome is awaited rather than made
  * on the next line.
  *
- * <p>Messages are inspected through second queues bound to the same
- * exchanges — one on {@code invoice.processing}, one on the dead-letter
- * exchange — so everything published is delivered to the real consumers
- * <em>and</em> to the test. Stopping a listener to intercept a message
- * would have been the other option, and a test that leaves a listener
- * stopped when it fails is a test that breaks the ones after it. It also
- * keeps these tests about the routing rather than about what
- * {@code DeadLetterListener} then does with the message, which is
- * {@code RecoveryPostgresTest}'s subject.
+ * <p>Messages are inspected through a second queue bound to the same
+ * exchange and routing key, so everything published is delivered to the
+ * real consumer <em>and</em> to the test. Stopping a listener to
+ * intercept a message would have been the other option, and a test that
+ * leaves a listener stopped when it fails is a test that breaks the ones
+ * after it.
+ *
+ * <p>What a consumer does with the message moved out with the consumer:
+ * dead-lettering an unreadable one, ignoring an unknown type, refusing a
+ * redelivery — all of that is {@code ocr-worker-service}'s to test now.
+ * What stays here is the half this service owns: what it puts on the
+ * wire.
  */
 @SpringBootTest
 class RabbitMessagingTest extends ContainersTest {
@@ -80,16 +80,6 @@ class RabbitMessagingTest extends ContainersTest {
     /** Receives a copy of everything the relay publishes. */
     static final String SPY_QUEUE = "test.wire.spy";
 
-    /**
-     * Receives a copy of everything that gets dead-lettered.
-     *
-     * <p>Needed because {@code DeadLetterListener} now reads the real
-     * dead-letter queue, so a test that pulled messages out of it would
-     * be racing the consumer it is not testing. A second queue on the
-     * dead-letter exchange sees the same messages without competing for
-     * them, which is what keeps these tests about the <em>routing</em>.
-     */
-    static final String DLX_SPY_QUEUE = "test.dlx.spy";
 
     private static final Duration PATIENCE = Duration.ofSeconds(20);
 
@@ -97,7 +87,6 @@ class RabbitMessagingTest extends ContainersTest {
     private static final AtomicLong SEQUENCE = new AtomicLong(5_000);
 
     @MockitoBean DocumentStorage storage;
-    @MockitoBean ExtractionOrchestrator orchestrator;
 
     @Autowired UploadComprobante upload;
     @Autowired UserRepository users;
@@ -115,13 +104,9 @@ class RabbitMessagingTest extends ContainersTest {
         admin.purgeQueue(RabbitTopology.QUEUE);
         admin.purgeQueue(RabbitTopology.DLQ);
         admin.purgeQueue(SPY_QUEUE);
-        admin.purgeQueue(DLX_SPY_QUEUE);
         outbox.deleteAll();
 
         when(storage.store(any(), anyString())).thenReturn("documents/2026/11/stored.pdf");
-        when(storage.retrieve(anyString())).thenReturn("%PDF-1.4 irrelevante".getBytes());
-        when(orchestrator.extract(any())).thenReturn(new ExtractionResult(
-                Map.of(), List.of(), SourceType.PDF_TEXT, false, null, null));
     }
 
     /**
@@ -151,12 +136,6 @@ class RabbitMessagingTest extends ContainersTest {
         admin.declareBinding(BindingBuilder.bind(spy)
                 .to(new TopicExchange(RabbitTopology.EXCHANGE, true, false))
                 .with(JobExtractionRequested.TYPE));
-
-        Queue dlxSpy = QueueBuilder.nonDurable(DLX_SPY_QUEUE).build();
-        admin.declareQueue(dlxSpy);
-        admin.declareBinding(BindingBuilder.bind(dlxSpy)
-                .to(new TopicExchange(RabbitTopology.DLX, true, false))
-                .with(RabbitTopology.FAILED_KEY));
     }
 
     // ── Fixtures ──────────────────────────────────────────────────────
@@ -175,44 +154,36 @@ class RabbitMessagingTest extends ContainersTest {
         return message;
     }
 
-    /** A well-formed envelope around whatever body is given. */
-    private Message messageWith(String type, int version, byte[] body) {
-        return MessageBuilder.withBody(body)
-                .setMessageId(UUID.randomUUID().toString())
-                .setType(type)
-                .setHeader(RabbitOutboxPublisher.VERSION_HEADER, version)
-                .setTimestamp(new Date())
-                .setContentType(MessageProperties.CONTENT_TYPE_JSON)
-                .build();
-    }
 
-    private void sendDirectly(Message message) {
-        rabbit.send(RabbitTopology.EXCHANGE, JobExtractionRequested.TYPE, message);
-    }
 
-    private long depthOf(String queue) {
-        var info = admin.getQueueInfo(queue);
-        return info == null ? 0L : info.getMessageCount();
-    }
 
     // ── The whole chain ───────────────────────────────────────────────
 
     @Nested
-    @DisplayName("de punta a punta")
-    class EndToEnd {
+    @DisplayName("hasta la cola")
+    class UpToTheQueue {
 
+        /**
+         * The whole gain of the queue, from this side: the upload's
+         * transaction leaves the job {@code PENDING} and the request on
+         * the broker, and returns. It does not wait for anybody.
+         *
+         * <p>It used to go on and await {@code EXTRACTED}, which it could
+         * only do while the consumer lived in this same process. Now the
+         * assertion stops where this service's responsibility does.
+         */
         @Test
-        @DisplayName("la subida responde enseguida y la extraccion pasa despues, del otro lado de la cola")
-        void theUploadReturnsBeforeTheExtractionHappens() {
+        @DisplayName("la subida responde dejando el pedido en la cola, sin esperar a nadie")
+        void theUploadLeavesTheRequestOnTheQueueAndReturns() {
             UUID jobId = anUpload();
 
-            // The upload's own transaction left it PENDING: it did not
-            // wait for the extraction, which is the whole gain.
             assertThat(outbox.findByAggregateId(jobId)).hasSize(1);
+            assertThat(jobs.findById(jobId).orElseThrow().getStatus())
+                    .isEqualTo(JobStatus.PENDING);
 
-            await().atMost(PATIENCE).untilAsserted(() ->
-                    assertThat(jobs.findById(jobId).orElseThrow().getStatus())
-                            .isEqualTo(JobStatus.EXTRACTED));
+            // And it really is on the broker: the spy queue is bound to
+            // the same key the work queue is.
+            assertThat(fromSpyQueue()).isNotNull();
         }
 
         @Test
@@ -294,87 +265,4 @@ class RabbitMessagingTest extends ContainersTest {
 
     // ── Lo que el consumidor no puede procesar ────────────────────────
 
-    @Nested
-    @DisplayName("la dead-letter queue")
-    class DeadLettering {
-
-        /**
-         * Without a dead-letter exchange this message would simply be
-         * dropped: rejected, gone, with no record it ever arrived. The
-         * DLQ has no consumer yet — the retry loop is week 3 — and that
-         * is exactly why it is worth declaring now, because the
-         * alternative to a queue nobody reads is a message nobody can.
-         */
-        @Test
-        @DisplayName("un mensaje que el consumidor no puede leer termina en la DLQ, no perdido")
-        void anUnreadableMessageEndsUpInTheDeadLetterQueue() {
-            sendDirectly(messageWith(JobExtractionRequested.TYPE, 1,
-                    "esto no es el payload que dice ser".getBytes(StandardCharsets.UTF_8)));
-
-            Message dead = rabbit.receive(DLX_SPY_QUEUE, PATIENCE.toMillis());
-
-            assertThat(dead).as("the message was dropped instead of dead-lettered").isNotNull();
-            assertThat(new String(dead.getBody(), StandardCharsets.UTF_8))
-                    .isEqualTo("esto no es el payload que dice ser");
-        }
-
-        /**
-         * {@code requeue=false} on the nack. Requeueing a message that
-         * will fail the same way is a hot loop: the broker would
-         * redeliver it as fast as it can, forever, and the consumer
-         * would do nothing else.
-         */
-        @Test
-        @DisplayName("y no vuelve a la cola de trabajo: reencolar lo que va a fallar igual es un bucle caliente")
-        void andItDoesNotComeBackToTheWorkQueue() {
-            sendDirectly(messageWith(JobExtractionRequested.TYPE, 1,
-                    "ilegible".getBytes(StandardCharsets.UTF_8)));
-
-            await().atMost(PATIENCE).untilAsserted(() ->
-                    assertThat(depthOf(DLX_SPY_QUEUE)).isEqualTo(1L));
-
-            assertThat(depthOf(RabbitTopology.QUEUE)).isZero();
-        }
-
-        /**
-         * A message without a version is not a v1 message. Defaulting it
-         * would be the dangerous reading — the whole purpose of the field
-         * is to stop a consumer assuming a shape.
-         */
-        @Test
-        @DisplayName("un mensaje sin version se descarta a la DLQ en vez de asumirse v1")
-        void aMessageWithNoVersionIsNotAssumedToBeVersionOne() {
-            Message noVersion = MessageBuilder
-                    .withBody("{}".getBytes(StandardCharsets.UTF_8))
-                    .setMessageId(UUID.randomUUID().toString())
-                    .setType(JobExtractionRequested.TYPE)
-                    .build();
-
-            sendDirectly(noVersion);
-
-            assertThat(rabbit.receive(DLX_SPY_QUEUE, PATIENCE.toMillis())).isNotNull();
-        }
-
-        /**
-         * The other half of versioning: a type this consumer is not the
-         * reader of is acknowledged and dropped, not dead-lettered. It
-         * arrived correctly — there is nothing wrong with it. Treating it
-         * as a failure would make introducing a new event type require a
-         * coordinated deployment of everything that listens.
-         */
-        @Test
-        @DisplayName("un tipo de evento desconocido se ackea y se descarta, sin pasar por la DLQ")
-        void anUnknownEventTypeIsAckedAndDropped() {
-            Message other = messageWith("job.extraction.completed", 1,
-                    "{}".getBytes(StandardCharsets.UTF_8));
-
-            sendDirectly(other);
-
-            // It leaves the work queue...
-            await().atMost(PATIENCE).untilAsserted(() ->
-                    assertThat(depthOf(RabbitTopology.QUEUE)).isZero());
-            // ...and does not turn up as a failure.
-            assertThat(depthOf(DLX_SPY_QUEUE)).isZero();
-        }
-    }
 }

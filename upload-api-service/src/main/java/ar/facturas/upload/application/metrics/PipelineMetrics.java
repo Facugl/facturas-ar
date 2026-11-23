@@ -1,7 +1,6 @@
 package ar.facturas.upload.application.metrics;
 
 import ar.facturas.domain.model.OutboxEvent;
-import ar.facturas.extraction.ExtractionResult;
 import ar.facturas.infrastructure.persistence.OutboxEventRepository;
 import ar.facturas.upload.application.usecase.RequeueJob;
 import io.micrometer.core.instrument.Counter;
@@ -14,7 +13,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Map;
 
 /**
  * Every custom metric the pipeline publishes, and the only place their
@@ -33,23 +31,24 @@ import java.util.Map;
  * <ul>
  *   <li>Is the relay keeping up? → {@code invoice.outbox.publish.latency}
  *       and {@code invoice.outbox.pending}</li>
- *   <li>How long does an extraction take, so the reaper's timeout can be
- *       chosen instead of guessed? → {@code invoice.job.processing.time}.
- *       That number is 10 minutes today because nothing measured it; the
- *       comment in {@code application.yml} has been promising this metric
- *       since the reaper shipped</li>
- *   <li>Does at-least-once delivery actually bite? →
- *       {@code invoice.job.duplicate.delivery}</li>
  *   <li>Are the recovery paths doing anything, and what? →
  *       {@code invoice.recovery.moves} and
  *       {@code invoice.deadletter.received}. Both are mechanisms that
  *       fail by doing nothing, which is the worst way for a recovery
  *       mechanism to fail</li>
- *   <li>What fraction of comprobantes give up their QR? →
- *       {@code invoice.qr.detection}, the metric
- *       <a href="../../../../../../../docs/adr/009-deteccion-del-qr-en-el-cliente.md">ADR 009</a>
- *       has been asking for since acceptance criterion 2 collapsed</li>
  * </ul>
+ *
+ * <p><strong>What used to be here and now is not.</strong> Everything
+ * about an extraction — {@code invoice.job.processing.time},
+ * {@code invoice.qr.detection}, {@code invoice.extraction.source},
+ * {@code invoice.job.duplicate.delivery} — moved to
+ * {@code ExtractionMetrics} in {@code ocr-worker-service} when the
+ * worker became its own deployable. The rule above did not change and is
+ * the reason for the split rather than against it: the metrics live
+ * where the work happens, so no name has two homes.
+ *
+ * <p>Prometheus scrapes both services, and {@code instance} separates
+ * them in every query without a query having to know there are two.
  */
 @Component
 @RequiredArgsConstructor
@@ -59,12 +58,8 @@ public class PipelineMetrics {
 
     static final String OUTBOX_LATENCY = "invoice.outbox.publish.latency";
     static final String OUTBOX_PENDING = "invoice.outbox.pending";
-    static final String PROCESSING_TIME = "invoice.job.processing.time";
-    static final String DUPLICATE_DELIVERY = "invoice.job.duplicate.delivery";
     static final String RECOVERY_MOVES = "invoice.recovery.moves";
     static final String DEADLETTER_RECEIVED = "invoice.deadletter.received";
-    static final String QR_DETECTION = "invoice.qr.detection";
-    static final String FIELD_SOURCE = "invoice.extraction.source";
 
     private final MeterRegistry registry;
     private final OutboxEventRepository outbox;
@@ -110,70 +105,6 @@ public class PipelineMetrics {
                 .publishPercentileHistogram()
                 .register(registry)
                 .record(Duration.between(event.getCreatedAt(), Instant.now()));
-    }
-
-    // ── Extraccion ────────────────────────────────────────────────────
-
-    public Timer.Sample startProcessing() {
-        return Timer.start(registry);
-    }
-
-    /**
-     * @param outcome {@code extracted}, {@code duplicate} or {@code failed}
-     */
-    public void stopProcessing(Timer.Sample sample, String outcome) {
-        sample.stop(Timer.builder(PROCESSING_TIME)
-                .description("Wall time of one extraction attempt, from claim to persisted")
-                .tag("outcome", outcome)
-                .publishPercentileHistogram()
-                .register(registry));
-    }
-
-    /**
-     * A message arrived for a job that was no longer claimable.
-     *
-     * <p>Not an error — at-least-once delivery means this is expected —
-     * but worth counting, because it is the only way to see how often the
-     * guarantee the atomic claim provides is actually being used. A flat
-     * zero would mean the idempotency has never been exercised in
-     * production, which is worth knowing before trusting it.
-     */
-    public void duplicateDelivery() {
-        Counter.builder(DUPLICATE_DELIVERY)
-                .description("Deliveries for a job that was not claimable, absorbed by the claim")
-                .register(registry)
-                .increment();
-    }
-
-    /**
-     * The health metric the project cares about most.
-     *
-     * <p>Tagged by {@code source} because that is what
-     * <a href="../../../../../../../docs/adr/009-deteccion-del-qr-en-el-cliente.md">ADR 009</a>
-     * asks for. Today only the server reads QRs, so the values are
-     * {@code servidor} and {@code ninguno}; when detection in the browser
-     * lands it adds {@code cliente} without changing the query anybody
-     * has written against it.
-     */
-    public void extracted(ExtractionResult result) {
-        Counter.builder(QR_DETECTION)
-                .description("Comprobantes by whether a QR was read, and by who read it")
-                .tag("source", result.qrDetected() ? "servidor" : "ninguno")
-                .tag("document", String.valueOf(result.sourceType()))
-                .register(registry)
-                .increment();
-
-        // Where each field came from. Bounded by design: twelve fields
-        // and four sources is a few dozen series, and it is the dataset
-        // that says which field the parser is worst at.
-        for (Map.Entry<String, String> field : result.fieldSources().entrySet()) {
-            Counter.builder(FIELD_SOURCE)
-                    .description("Fields extracted, by which strategy produced the value")
-                    .tag("field", field.getKey())
-                    .tag("source", field.getValue())
-                    .register(registry)
-                    .increment();
-        }
     }
 
     // ── Recuperacion ──────────────────────────────────────────────────

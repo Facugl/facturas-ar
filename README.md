@@ -16,19 +16,19 @@
 
 ## Estado actual
 
-**Fase 1, semanas 1-3, el export de la 5, y las semanas 1-2 de la Fase 2
-más la recuperación de fallas de la 3.** El sistema ingesta un
-comprobante, le extrae los datos, y devuelve el período en un CSV que
-abre en Excel sin tocar nada. **La extracción ya no pasa en el request**:
+**Fase 1, semanas 1-3 y el export de la 5. Fase 2 completa menos Redis.
+Fase 3, semana 1.** El sistema ingesta un comprobante, le extrae los
+datos, y devuelve el período en un CSV que abre en Excel sin tocar nada.
+**La extracción no pasa en el request y no pasa en el mismo proceso**:
 entre la subida y el procesamiento hay una fila durable en
-`outbox_event` y un RabbitMQ, así que el `POST` responde en medio segundo
-y el trabajo corre del otro lado de la cola. Y si el worker se cae a
-mitad de un job, el job vuelve solo.
+`outbox_event`, un RabbitMQ y **un segundo deployable**. El `POST`
+responde en medio segundo; si el worker se cae a mitad de un job, el job
+vuelve solo; y todo eso se mide en Prometheus.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, stack dockerizado, 318 tests (39 contra Postgres y RabbitMQ reales), CI |
-| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y el resto de la Fase 2 (worker como servicio aparte, Redis) |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **métricas custom en Prometheus**, stack dockerizado, 326 tests (49 contra Postgres y RabbitMQ reales), CI |
+| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, Redis, y los dashboards de Grafana |
 
 **La API hoy:** `POST /documents` · `GET /jobs/:id` ·
 `PUT /jobs/:id/confirm` · `GET /export/csv?from=&to=`
@@ -48,12 +48,12 @@ marca qué está hecho.
 > desarrollo sembrado al arrancar, y la aplicación lo grita en el log.
 > Llega en la semana 4.
 
-> **La cola está; el worker todavía no es un servicio aparte.** El
-> consumidor está escrito como consumidor de cola —lee el tipo y la
-> versión antes de confiar en el body, no hace nada que no pueda hacer
-> dos veces— pero corre adentro del `upload-api-service`. Mudarlo a
-> `ocr-worker-service` es lo que queda de la semana 3. Ver
-> [sección 8](#8-contratos-de-eventos).
+> **Son dos procesos.** `upload-api-service` atiende HTTP, publica y
+> recupera; `ocr-worker-service` consume la cola y corre la cascada. No
+> comparten una línea de código propio: lo único en común son tres
+> módulos `shared-*` y la base. Por qué no son microservicios, en el
+> [ADR 006](docs/adr/006-dos-servicios-una-base.md); qué comparten y por
+> qué, en el [ADR 013](docs/adr/013-los-repositorios-son-compartidos.md).
 
 > **Probado con el broker caído.** Un `POST` con RabbitMQ detenido
 > devuelve `202` igual: el evento espera en la tabla y sale cuando el
@@ -255,7 +255,11 @@ El orden técnico del roadmap (sync → cola/Redis → observabilidad → pulido
 
 Los diagramas se generan con [Archify](https://github.com/tt-a1i/archify) a partir del JSON tipado que vive en [docs/diagrams/](docs/diagrams/). Cada uno se publica como un HTML interactivo (temas claro/oscuro, foco por nodo, trazado de rutas, export a imagen). Abajo va la vista estática, porque GitHub no renderiza el HTML del repo: para la versión navegable, abrí el archivo después de clonar.
 
-### Vista de componentes (estado final, post Fase 2)
+### Vista de componentes
+
+> Esto ya es el estado real, con dos excepciones: **Redis** y el
+> **frontend**. Todo lo demás —los dos servicios, la cola, el outbox, el
+> almacenamiento, Prometheus— está corriendo.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/arquitectura-dark.png">
@@ -269,7 +273,7 @@ Los diagramas se generan con [Archify](https://github.com/tt-a1i/archify) a part
 | Componente | Responsabilidad | Qué **no** hace |
 |---|---|---|
 | `frontend` | Upload, encuadre de la foto, polling de estado, formulario de revisión, historial y export | Nada de OCR ni reglas de parseo |
-| `upload-api-service` | Auth, persistencia de `Document`/`Job`, subida al storage, escritura del evento en la tabla outbox, lectura cacheada, export CSV/PDF | No extrae nada: no conoce ZXing ni Tesseract |
+| `upload-api-service` | Auth, persistencia de `Document`/`Job`, subida al storage, escritura del evento en la tabla outbox, **el relay que lo publica**, **la recuperación de fallas** (reaper y consumidor de la DLQ), lectura cacheada, export CSV/PDF | No extrae nada: **ya no tiene ZXing, OpenCV ni PDFBox en el classpath** |
 | `ocr-worker-service` | Consume la cola y corre la **cascada de extracción** (QR → texto embebido → OCR), fusiona por confianza, persiste resultado e invalida cache | No conoce al usuario (el evento no lleva `userId`) |
 | `RabbitMQ` | Desacople y buffer entre ingesta y procesamiento, reintentos y dead-letter | No transporta el archivo (solo el `storageKey`) |
 | `Redis` | Cache-aside de `GET /jobs/:id` (polling intensivo del frontend) | No es fuente de verdad: se invalida, no se actualiza |
@@ -1285,15 +1289,12 @@ facturas-ar/
 │   ├── src/main/resources/db/migration/   # Flyway: Postgres es de las migraciones
 │   └── src/main/java/.../upload/
 │       ├── adapters/in/rest/       # Document, Job, Export + manejo de errores
-│       ├── adapters/in/messaging/  # ExtractionRequestListener: @RabbitListener
-│       │                           #   con ack manual. Se muda al worker en la
-│       │                           #   semana 3 y el cuerpo no cambia
-│       ├── adapters/out/persistence/   # repositorios Spring Data
-│       ├── adapters/out/storage/   # S3DocumentStorage
+│       ├── adapters/in/messaging/  # DeadLetterListener: rastrea el job por
+│       │                           #   el message-id y lo vuelve a pedir
 │       ├── adapters/out/messaging/ # RabbitOutboxPublisher: espera la
 │       │                           #   confirmación del broker antes de volver
-│       ├── application/usecase/    # UploadComprobante, ExtractComprobante,
-│       │                           #   ExportComprobantes
+│       ├── application/usecase/    # UploadComprobante, ExportComprobantes,
+│       │                           #   RequeueJob
 │       ├── application/outbox/     # Outbox (escribe), OutboxRelay (vacía),
 │       │                           #   OutboxPublisher (el puerto al transporte)
 │       ├── application/event/      # ComprobanteUploaded + DrainOutboxOnUpload
@@ -1308,13 +1309,23 @@ facturas-ar/
 │   └── src/main/java/.../events/
 │       ├── DomainEvent.java        # un payload que sabe cómo se llama en el cable
 │       ├── JobExtractionRequested.java
-│       └── EventEnvelope.java      # lo que cruza el transporte
+│       ├── EventEnvelope.java      # lo que cruza el transporte
+│       └── Topology.java           # los nombres que productor y consumidor
+│                                   #   tienen que compartir
 │
-├── ocr-worker-service/             # runnable Spring Boot app — FASE 2
-│   ├── Dockerfile                  # installs tesseract-ocr
-│   └── src/main/java/.../
-│       ├── listener/                # @RabbitListener que envuelve a extraction/
-│       └── config/
+├── shared-infrastructure/          # cómo se llega a lo que los dos comparten
+│   └── src/main/java/.../infrastructure/
+│       ├── persistence/            # los repositorios. UNA base, UN mapeo
+│       ├── storage/                # S3DocumentStorage + su config
+│       ├── messaging/              # RabbitTopology: los dos la declaran
+│       └── SharedInfrastructure.java   # un @Import y está todo cableado
+│
+├── ocr-worker-service/             # runnable Spring Boot app
+│   ├── Dockerfile                  # sin Flyway; tesseract entra con el OCR
+│   └── src/main/java/.../worker/
+│       ├── adapters/in/messaging/  # ExtractionRequestListener (@RabbitListener)
+│       ├── application/            # ExtractComprobante + ExtractionMetrics
+│       └── config/                 # ExtractionConfig: arma la cascada
 │
 ├── frontend/                       # React + Vite
 │   └── src/
@@ -1417,7 +1428,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 |---|---|---|
 | 1 | ~~Aprender RabbitMQ~~ → **contrato de evento + transactional outbox y su relay** | ✅ |
 | 2 | **RabbitMQ en el medio** (exchange, queue, routing key, ack manual, DLX): el relay publica al broker y un `@RabbitListener` consume, todavía en el mismo servicio | ✅ |
-| 3 | ~~Consumidor de la DLQ con reintentos~~ + **reaper de jobs colgados** · Separar `ocr-worker-service`, invalidación de cache Redis | 🔶 |
+| 3 | ~~Consumidor de la DLQ con reintentos~~ + **reaper de jobs colgados** · ~~Separar `ocr-worker-service`~~ · invalidación de cache Redis | 🔶 |
 | 4 (buffer) | Testing de casos de falla con Testcontainers: matar el worker a mitad de un job, tirar abajo el broker con eventos pendientes en el outbox | ⬜ |
 
 > **Las semanas 1 y 2 se dieron vuelta, y vale decir por qué.** El plan
@@ -1443,10 +1454,17 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 
 ### Fase 3 — Observabilidad (1.5-2 semanas)
 
-| Semana | Foco |
-|---|---|
-| 1 | Actuator + Micrometer, métricas custom (empezando por la tasa de detección de QR **con tag `source`: cliente, servidor o ninguno**, ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md), y el origen por campo), Prometheus scrapeando |
-| 2 (parcial) | Dashboards Grafana, logs estructurados |
+| Semana | Foco | |
+|---|---|---|
+| 1 | **Actuator + Micrometer, métricas custom** (empezando por la tasa de detección de QR con tag `source`, ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md), y el origen por campo), **Prometheus scrapeando los dos servicios** | ✅ |
+| 2 (parcial) | Dashboards Grafana, logs estructurados | ⬜ |
+
+> **La semana 1 se adelantó, y por un motivo concreto.** El
+> `application.yml` del reaper decía que su timeout "sale de medir
+> `invoice.job.processing.time`", y esa medición no existía: eran 10
+> minutos elegidos a dedo. Un valor en producción bloqueado en una
+> medición que no estaba. Con la métrica puesta bajó a 2 minutos, con el
+> número escrito al lado.
 
 ### Fase 4 — Pulido de frontend y README final (1-2 semanas)
 

@@ -1,6 +1,7 @@
-package ar.facturas.upload.config;
+package ar.facturas.infrastructure.messaging;
 
 import ar.facturas.events.JobExtractionRequested;
+import ar.facturas.events.Topology;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.Queue;
@@ -30,6 +31,23 @@ import org.springframework.context.annotation.Configuration;
  * behaviour worth having: it is how a queue whose definition drifted
  * gets noticed.
  *
+ * <p><strong>Both services declare it, and that is a correction.</strong>
+ * This class started out in the API, on the argument that two services
+ * racing to declare the same topology with possibly different arguments
+ * was a startup failure waiting to happen. The premise was wrong: the
+ * arguments come from one class that both import, so they cannot differ.
+ * What the single owner did cost was real — the worker could not start
+ * against a broker where the API had not run yet, which in a test is a
+ * context that will not load and in production is a crash loop until the
+ * API appears.
+ *
+ * <p>It reads like the opposite of the rule for Flyway, where the schema
+ * deliberately has one owner, and the difference is the point:
+ * <em>declaring</em> an exchange is idempotent and stateless, while a
+ * migration is an ordered sequence of changes and two of them running at
+ * once is genuinely dangerous. Same question, different answer, because
+ * the operations are different in kind.
+ *
  * <p><strong>Why a topic exchange for a single routing key.</strong> A
  * direct exchange would do the same job today. The reason for topic is
  * that the routing key is the event type, so the day
@@ -50,14 +68,17 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class RabbitTopology {
 
-    public static final String EXCHANGE = "invoice.processing";
-    public static final String DLX = "invoice.processing.dlx";
+    // The names come from the contract, not from here. A consumer cannot
+    // listen without knowing them, so they are a shared agreement — and
+    // the worker must not have to reach into this service to find them.
+    // What stays here is the declaring, which has one owner on purpose.
+    public static final String EXCHANGE = Topology.EXCHANGE;
+    public static final String DLX = Topology.DLX;
 
-    public static final String QUEUE = "ocr.extraction.queue";
-    public static final String DLQ = "ocr.extraction.dlq";
+    public static final String QUEUE = Topology.QUEUE;
+    public static final String DLQ = Topology.DLQ;
 
-    /** The routing key of a rejected message, and the DLQ's binding. */
-    public static final String FAILED_KEY = "job.extraction.failed";
+    public static final String FAILED_KEY = Topology.FAILED_KEY;
 
     @Bean
     TopicExchange invoiceProcessing() {

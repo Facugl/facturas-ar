@@ -1,4 +1,4 @@
-package ar.facturas.upload.application.usecase;
+package ar.facturas.worker.application;
 
 import ar.facturas.domain.model.Document;
 import ar.facturas.domain.model.ExtractedInvoiceData;
@@ -11,7 +11,6 @@ import ar.facturas.extraction.InvoiceField;
 import ar.facturas.infrastructure.persistence.DocumentRepository;
 import ar.facturas.infrastructure.persistence.ExtractedInvoiceDataRepository;
 import ar.facturas.infrastructure.persistence.JobRepository;
-import ar.facturas.upload.application.metrics.PipelineMetrics;
 import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,7 +48,7 @@ public class ExtractComprobante {
     private final ExtractedInvoiceDataRepository extractedData;
     private final DocumentStorage storage;
     private final ExtractionOrchestrator orchestrator;
-    private final PipelineMetrics metrics;
+    private final ExtractionMetrics metrics;
     private final TransactionTemplate tx;
 
     /**

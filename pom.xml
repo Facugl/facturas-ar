@@ -25,12 +25,14 @@
     <module>shared-events</module>
     <module>shared-infrastructure</module>
     <module>upload-api-service</module>
-    <!-- ocr-worker-service entra cuando exista la cola. Un módulo vacío
-         durante seis semanas es ruido, no preparación.
+    <module>ocr-worker-service</module>
 
-         shared-events estaba en esa misma nota y nació antes: el outbox
-         guarda el payload serializado, así que el contrato del mensaje
-         existe desde que existe la tabla, no desde que existe el broker. -->
+    <!-- Los tres módulos `shared-*` nacieron cada uno cuando hubo dos
+         lados que lo necesitaran, no antes: shared-domain con las
+         entidades, shared-events con el outbox (que guarda el payload
+         serializado, así que el contrato existe desde que existe la
+         tabla) y shared-infrastructure al separar el worker. Un módulo
+         vacío esperando su momento es ruido, no preparación. -->
   </modules>
 
   <properties>
