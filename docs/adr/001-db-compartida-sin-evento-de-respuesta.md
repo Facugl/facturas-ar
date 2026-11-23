@@ -1,6 +1,6 @@
 # 001 — DB compartida, sin evento de respuesta del worker
 
-**Estado:** aceptada · pendiente de implementar (Fase 2)
+**Estado:** aceptada · **implementada** (2026-11-23)
 **Fecha:** 2026-10-17
 
 ## Contexto

@@ -153,13 +153,27 @@ período cierre. El resto de las reglas del archivo está en la
 
 ### Para desarrollar
 
-Lo habitual es levantar solo la infraestructura y correr la app desde el
-IDE:
+Lo habitual es levantar solo la infraestructura y correr los dos
+servicios desde el IDE:
 
 ```bash
-docker compose up -d postgres s3
-./mvnw spring-boot:run -pl upload-api-service
+docker compose up -d postgres s3 rabbitmq redis
+./mvnw spring-boot:run -pl upload-api-service    # 8080
+./mvnw spring-boot:run -pl ocr-worker-service    # 8081, en otra terminal
 ```
+
+Con la API sola alcanza para trabajar en la subida o el export: el
+comprobante se queda en `PENDING` porque nadie consume la cola, y eso es
+exactamente lo que el sistema hace cuando el worker está caído. Para ver
+un job llegar a `EXTRACTED` hacen falta los dos.
+
+> **El jar ejecutable lleva sufijo:** `upload-api-service-…-boot.jar`, no
+> el que no tiene ninguno. Es por la dependencia de test del worker a la
+> API — ver el [ADR 013](docs/adr/013-los-repositorios-son-compartidos.md).
+> `spring-boot:run` no se entera; `java -jar` sí.
+
+Y para correr los tests hace falta **Docker corriendo**: levantan
+Postgres, RabbitMQ y Redis de verdad con Testcontainers.
 
 Y para empezar de cero, incluida la base:
 
@@ -726,7 +740,7 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 - El envelope viaja en las propiedades de AMQP, no dentro del body ([ADR 011](docs/adr/011-el-envelope-viaja-en-las-propiedades-de-amqp.md))
 
 ### Worker de extracción
-- Java 21 + Spring Boot 4.1.1 (módulo separado, semana 3 de la Fase 2)
+- Java 21 + Spring Boot 4.1.1 — **deployable aparte, en uso** ([ADR 006](docs/adr/006-dos-servicios-una-base.md))
 - **ZXing** (`com.google.zxing:core` + `com.google.zxing:javase`) — lectura del QR en PDF rasterizado y escaneos
 - **OpenCV** (`org.bytedeco:opencv`, compilado con `opencv_contrib`) — el detector de QR de WeChat, que es el que lee las fotos, más el preprocesamiento del OCR. **Juntas, la dependencia más importante del proyecto** ([ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md))
 - Apache PDFBox 3.x — texto embebido (`PDFTextStripper`) y rasterizado de la página para buscar el QR (`PDFRenderer`)
@@ -791,9 +805,9 @@ todos los bindings que matchean, así que el test mira sin interferir —
 la otra opción era parar el listener, y un test que lo deja parado
 cuando falla rompe los que vienen después.
 
-Consecuencia práctica: **`./mvnw test` ahora necesita Docker corriendo.**
-Los dos contenedores arrancan una sola vez por JVM y Ryuk los limpia al
-terminar.
+Consecuencia práctica: **`./mvnw test` necesita Docker corriendo.** Los
+tres contenedores —Postgres, RabbitMQ y Redis— arrancan una sola vez por
+JVM y Ryuk los limpia al terminar.
 
 ### Export
 - CSV: Apache Commons CSV o OpenCSV (nunca a mano con StringBuilder)
@@ -1158,12 +1172,12 @@ framework.
 
 **Decisión:** el worker escribe directo a la DB compartida (Postgres), no publica evento de respuesta. Razón: con un solo desarrollador y volumen inicial chico, un segundo círculo de mensajería es complejidad sin beneficio real. El valor de mensajería asíncrona ya está demostrado con el evento de entrada.
 
-> Documentar como ADR (`001-shared-db-vs-response-event.md`): *"Evalué un evento de respuesta (`job.extraction.completed`) pero opté por escritura directa a DB compartida dado el volumen y topología de despliegue actuales; con múltiples workers escalando independientemente de la API, reconsideraría esto."*
+> **[ADR 001 — DB compartida, sin evento de respuesta del worker](docs/adr/001-db-compartida-sin-evento-de-respuesta.md).** Esta línea decía "documentar como ADR" y apuntaba a un nombre de archivo que nunca existió; el ADR está escrito y el worker ya escribe directo a la base.
 
 **Flujo del worker al terminar:**
 1. Corre la cascada de extracción (QR → texto embebido → OCR) y fusiona por confianza.
 2. Persiste `ExtractedInvoiceData` + actualiza `Job.status` (transacción única).
-3. Invalida (borra, no actualiza) la entrada de Redis para ese `jobId`.
+3. Invalida (borra, no actualiza) la entrada de Redis para ese job — y la clave lleva el `userId`, no solo el `jobId` ([ADR 014](docs/adr/014-el-cache-se-invalida-y-la-clave-lleva-el-dueno.md)).
 4. `ack` manual del mensaje recién después de confirmar la persistencia en DB.
 
 ### Ack manual, y qué va a la dead-letter queue
@@ -1289,12 +1303,21 @@ job, escribió un evento nuevo **sin gastar un intento** (`retry_count`
 quedó en 0), y el job terminó `EXTRACTED`. Las dos colas quedaron en
 cero.
 
-> El timeout de `PROCESSING` tiene que ser **holgado** respecto del peor
-> caso real de OCR (un PDF escaneado de varias páginas), si no el reaper
-> se roba jobs que todavía están corriendo — y ahí deja de ser un
-> mecanismo de recuperación y se vuelve un duplicador. El número sale de
-> medir `invoice.job.processing.time` (Fase 3); hasta entonces, 10
-> minutos a propósito.
+> **El timeout de `PROCESSING` son 2 minutos, y salen de medir.** Eran
+> 10 "generoso a propósito porque nada lo midió"; con
+> `invoice.job.processing.time` en Prometheus el número es p50 103 ms y
+> p95 336 ms en contenedor, así que 2 minutos son ~360× el p95.
+>
+> El margen sigue siendo grande por dos cosas que la medición **no**
+> cubre: el OCR todavía no existe y es el caso lento de verdad, y el
+> riesgo no es simétrico — un cutoff corto hace que el reaper le robe el
+> job a un worker que todavía trabaja, y ahí deja de ser recuperación
+> para volverse duplicación.
+>
+> Lo que hace seguro acortarlo es que ahora **el error se ve**: un cutoff
+> corto aparece como un pico en `invoice_job_duplicate_delivery_total`.
+> Antes de las métricas, equivocarse era invisible. Hay que volver a
+> medirlo cuando entre el OCR.
 
 ### Idempotencia del worker: claim atómico
 
@@ -1405,18 +1428,22 @@ facturas-ar/
 │       ├── application/            # ExtractComprobante + ExtractionMetrics
 │       └── config/                 # ExtractionConfig: arma la cascada
 │
-├── frontend/                       # React + Vite
-│   └── src/
-│
 ├── monitoring/
 │   ├── prometheus/prometheus.yml   # scrapea los DOS servicios
 │   └── grafana/
 │       ├── provisioning/           # datasource y provider, versionados
-│       └── dashboards/pipeline.json    # 8 paneles, ningún de CPU
+│       └── dashboards/pipeline.json    # 8 paneles, ninguno de CPU
 │
-└── scripts/
+├── frontend/                       # React + Vite — TODAVÍA NO EXISTE
+│   └── src/                        #   (semana 4 de la Fase 1)
+│
+└── scripts/                        # TODAVÍA NO EXISTE
     └── seed-demo-data.sh
 ```
+
+> Todo lo de arriba de `frontend/` está en el repositorio. Los dos
+> últimos no, y van marcados: un árbol que describe directorios que no
+> existen es la clase de deriva que ya se corrigió una vez acá.
 
 Notas clave:
 - `shared-domain` sin Spring Boot: compila más rápido, evita acoplar versiones de Spring entre servicios.

@@ -2,7 +2,7 @@
 
 > Documento de trabajo. Complementa al README: el README cuenta **qué** se construye, este documento explica **por qué** el problema es así, **qué casos de uso** se derivan de eso y **qué arquitectura** sostiene esos casos de uso.
 >
-> Última revisión: 2026-11-22.
+> Última revisión: 2026-11-23.
 >
 > **Es un registro de análisis, no un tablero de avance.** Lo que está
 > hecho y lo que falta vive en el roadmap del README. Varias secciones de
