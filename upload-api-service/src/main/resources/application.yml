@@ -32,6 +32,20 @@ server:
 
 # Configuración propia del proyecto
 facturas:
+  outbox:
+    # Cada cuánto barre el relay buscando eventos sin publicar.
+    #
+    # NO es el camino normal: la subida despierta al relay en cuanto
+    # commitea, así que en condiciones normales el evento sale en
+    # milisegundos y este barrido no encuentra nada. Está para lo que
+    # falla — el proceso que murió justo después del commit, o el
+    # transporte que estuvo caído un rato.
+    #
+    # Formato ISO-8601 obligatorio: fixedDelayString acepta "PT5S" o un
+    # número de milisegundos, pero NO "5s" (Spring solo parsea como
+    # Duration lo que empieza con P).
+    sweep-interval: PT5S
+
   storage:
     # S3Mock en dev. En producción, el endpoint de S3 real o el que
     # corresponda: el código va por el SDK de S3 y no sabe la diferencia.

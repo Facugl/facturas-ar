@@ -22,10 +22,14 @@
   <modules>
     <module>shared-domain</module>
     <module>extraction</module>
+    <module>shared-events</module>
     <module>upload-api-service</module>
-    <!-- shared-events y ocr-worker-service entran en la Fase 2, cuando
-         exista la cola. Un módulo vacío durante seis semanas es ruido,
-         no preparación. -->
+    <!-- ocr-worker-service entra cuando exista la cola. Un módulo vacío
+         durante seis semanas es ruido, no preparación.
+
+         shared-events estaba en esa misma nota y nació antes: el outbox
+         guarda el payload serializado, así que el contrato del mensaje
+         existe desde que existe la tabla, no desde que existe el broker. -->
   </modules>
 
   <properties>
@@ -77,6 +81,11 @@
       <dependency>
         <groupId>ar.facturas</groupId>
         <artifactId>shared-domain</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>ar.facturas</groupId>
+        <artifactId>shared-events</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

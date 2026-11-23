@@ -8,7 +8,9 @@ import ar.facturas.domain.port.DocumentStorage;
 import ar.facturas.upload.adapters.out.persistence.DocumentRepository;
 import ar.facturas.upload.adapters.out.persistence.JobRepository;
 import ar.facturas.upload.adapters.out.persistence.UserRepository;
+import ar.facturas.events.JobExtractionRequested;
 import ar.facturas.upload.application.event.ComprobanteUploaded;
+import ar.facturas.upload.application.outbox.Outbox;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,6 +47,7 @@ class UploadComprobanteTest {
     @Mock DocumentRepository documents;
     @Mock JobRepository jobs;
     @Mock DocumentStorage storage;
+    @Mock Outbox outbox;
     @Mock ApplicationEventPublisher events;
 
     UploadComprobante useCase;
@@ -52,7 +55,7 @@ class UploadComprobanteTest {
 
     @BeforeEach
     void setUp() {
-        useCase = new UploadComprobante(users, documents, jobs, storage, events);
+        useCase = new UploadComprobante(users, documents, jobs, storage, outbox, events);
         user = new User(USER_ID, "ana@test.ar", "hash");
     }
 
@@ -113,12 +116,48 @@ class UploadComprobanteTest {
         verify(storage, never()).store(any(), anyString());
         verify(documents, never()).save(any());
         verify(jobs, never()).save(any());
-        // Y no se vuelve a extraer: el trabajo ya se hizo la primera vez.
+        // Y no se vuelve a pedir la extraccion: el trabajo ya se hizo la
+        // primera vez. Ni el evento del outbox, ni el aviso al relay.
+        verify(outbox, never()).record(any(), any());
         verify(events, never()).publishEvent(any(ComprobanteUploaded.class));
     }
 
+    /**
+     * The event is written through the outbox and not published
+     * anywhere, which is the whole of ADR 005 seen from here: the upload
+     * leaves a durable record that work is pending and takes no
+     * responsibility for delivering it. Whether the two rows are really
+     * atomic is a property of the transaction, so it is checked against a
+     * real database in {@code OutboxPostgresTest}.
+     */
     @Test
-    void raisesTheEventThatTriggersExtraction() {
+    @DisplayName("escribe el evento en el outbox, con todo lo que el consumidor necesita")
+    void writesTheExtractionRequestToTheOutbox() {
+        when(users.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(documents.findByUser_IdAndContentHash(any(), anyString())).thenReturn(Optional.empty());
+        when(storage.store(any(), anyString())).thenReturn("documents/2026/11/abc.pdf");
+
+        var result = useCase.execute(command());
+
+        var aggregateId = ArgumentCaptor.forClass(UUID.class);
+        var payload = ArgumentCaptor.forClass(JobExtractionRequested.class);
+        verify(outbox).record(aggregateId.capture(), payload.capture());
+
+        assertThat(aggregateId.getValue()).isEqualTo(result.jobId());
+        assertThat(payload.getValue().jobId()).isEqualTo(result.jobId());
+        assertThat(payload.getValue().documentId()).isEqualTo(result.documentId());
+        assertThat(payload.getValue().storageKey()).isEqualTo("documents/2026/11/abc.pdf");
+        assertThat(payload.getValue().mimeType()).isEqualTo("application/pdf");
+    }
+
+    /**
+     * A doorbell, not the message. Losing it costs latency and nothing
+     * else, because the relay's periodic sweep publishes the same outbox
+     * row a few seconds later.
+     */
+    @Test
+    @DisplayName("avisa al relay que hay algo para publicar")
+    void ringsTheRelay() {
         when(users.findById(USER_ID)).thenReturn(Optional.of(user));
         when(documents.findByUser_IdAndContentHash(any(), anyString())).thenReturn(Optional.empty());
         when(storage.store(any(), anyString())).thenReturn("k");

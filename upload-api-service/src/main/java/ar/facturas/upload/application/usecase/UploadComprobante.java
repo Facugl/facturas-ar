@@ -4,10 +4,12 @@ import ar.facturas.domain.model.Document;
 import ar.facturas.domain.model.Job;
 import ar.facturas.domain.model.User;
 import ar.facturas.domain.port.DocumentStorage;
+import ar.facturas.events.JobExtractionRequested;
 import ar.facturas.upload.adapters.out.persistence.DocumentRepository;
 import ar.facturas.upload.adapters.out.persistence.JobRepository;
 import ar.facturas.upload.adapters.out.persistence.UserRepository;
 import ar.facturas.upload.application.event.ComprobanteUploaded;
+import ar.facturas.upload.application.outbox.Outbox;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -29,6 +31,11 @@ import java.util.UUID;
  * record that no retry can fix, while a stored file with no row is
  * garbage that costs a few kilobytes. When one of the two has to fail
  * first, it should be the cheap one.
+ *
+ * <p>The database writes are all one transaction, and that now includes
+ * the outbox row that announces the job. Nothing here publishes
+ * anything: the upload's responsibility ends at leaving a durable record
+ * that the work is pending.
  */
 @Service
 @RequiredArgsConstructor
@@ -47,6 +54,7 @@ public class UploadComprobante {
     private final DocumentRepository documents;
     private final JobRepository jobs;
     private final DocumentStorage storage;
+    private final Outbox outbox;
     private final ApplicationEventPublisher events;
 
     @Transactional
@@ -82,13 +90,21 @@ public class UploadComprobante {
         Job job = new Job(UUID.randomUUID(), document, MAX_RETRIES);
         jobs.save(job);
 
+        // The event goes into the same transaction as the job. Either
+        // both rows exist or neither does, which is the only way to
+        // guarantee that no job is ever left waiting for a message that
+        // was never written. See ADR 005.
+        outbox.record(job.getId(), new JobExtractionRequested(
+                job.getId(), document.getId(), storageKey, command.contentType()));
+
         log.info("Comprobante uploaded: job={} document={} bytes={}",
                 job.getId(), document.getId(), command.content().length);
 
-        // Raised, not called. In Fase 1 a listener extracts inline after
-        // this transaction commits; in Fase 2 the same moment writes to
-        // the outbox and the worker picks it up. The upload does not know
-        // which, and does not need to.
+        // A doorbell for the relay, raised after the row is written so
+        // that it has something to find. Losing it costs latency and
+        // nothing else: the periodic sweep publishes the same event a
+        // few seconds later. That is the whole difference between this
+        // and the outbox row above.
         events.publishEvent(new ComprobanteUploaded(job.getId()));
 
         return new UploadComprobanteResult(

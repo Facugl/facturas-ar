@@ -3,17 +3,20 @@ package ar.facturas.upload.application.event;
 import java.util.UUID;
 
 /**
- * A comprobante was stored and its job is waiting.
+ * A comprobante was stored, its job is waiting, and its event is in the
+ * outbox.
  *
- * <p>This is the seam where Fase 1 and Fase 2 differ, and the only one.
- * Today a listener picks it up and extracts in the same request. In Fase
- * 2 the same moment writes a row to the outbox instead, a relay
- * publishes it to RabbitMQ, and the worker consumes it.
+ * <p>An in-process notification, not the message. The message is the row
+ * the upload wrote in {@code outbox_event}; this only tells the relay
+ * there is something to do, so it does not have to wait for the next
+ * sweep. Nothing downstream of the relay ever sees this type.
  *
- * <p>The upload does not know which of those is happening, and that is
- * the whole reason to raise an event rather than call the extraction
- * directly: going asynchronous becomes a change of listener, not a
- * change of the upload.
+ * <p>That distinction is why it is still here after the outbox arrived.
+ * It used to be the trigger for the extraction itself; now it is a
+ * doorbell. If it were lost, the sweep would publish the event a few
+ * seconds later and the only casualty would be latency — which is the
+ * difference between a notification and a message, and the reason the
+ * event is a row and not this.
  */
 public record ComprobanteUploaded(UUID jobId) {
 }

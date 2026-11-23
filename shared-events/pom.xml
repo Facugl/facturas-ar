@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>ar.facturas</groupId>
+    <artifactId>facturas-ar</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>shared-events</artifactId>
+  <name>shared-events</name>
+  <description>Contratos de los mensajes: envoltorio y payloads. Java puro, cero dependencias.</description>
+
+  <!--
+    Separado de shared-domain porque evoluciona con otras reglas. Una
+    entidad se puede cambiar y redeployar en un paso; un mensaje no:
+    mientras haya dos versiones del productor y del consumidor corriendo
+    al mismo tiempo, el contrato tiene que ser compatible con las dos.
+    Por eso `eventVersion` existe desde la primera linea.
+
+    El README decia que este modulo se crea "junto con la cola". Nace
+    antes, y por un motivo concreto: el outbox guarda el payload
+    serializado, asi que el contrato existe desde que existe la tabla,
+    no desde que existe el broker.
+
+    Cero dependencias, ni siquiera JPA: lo que define un contrato de
+    mensajeria tiene que poder compilar en cualquier parte.
+  -->
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+</project>

@@ -36,5 +36,17 @@ public abstract class PostgresTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+
+        // The outbox relay's periodic sweep, pushed out of the way for
+        // every test that boots the application.
+        //
+        // It is not noise, it is a correctness problem. Spring caches
+        // application contexts and keeps them alive across test classes,
+        // so a sweep scheduled by one class goes on running while
+        // another is asserting on the outbox — and quietly publishes the
+        // rows that class deliberately left pending. The sweep is tested
+        // where it can be tested deterministically: OutboxRelayTest
+        // calls it directly, and OutboxPostgresTest calls drain().
+        registry.add("facturas.outbox.sweep-interval", () -> "PT1H");
     }
 }
