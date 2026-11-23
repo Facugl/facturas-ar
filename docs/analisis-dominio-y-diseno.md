@@ -664,6 +664,8 @@ Escritos. Ver [docs/adr/](adr/):
 | [008](adr/008-deduplicacion-en-tres-capas.md) | Por qué la deduplicación necesita tres capas y no una |
 | [009](adr/009-deteccion-del-qr-en-el-cliente.md) | Por qué el QR se detecta en el navegador y no en el servidor — el ADR que corrige al 004 con datos medidos, y al que el 010 le corrige la premisa |
 | [010](adr/010-dos-motores-para-leer-el-qr.md) | Dos motores para leer el QR, y OpenCV para las fotos — qué pasa cuando se mide con más de una herramienta |
+| [011](adr/011-el-envelope-viaja-en-las-propiedades-de-amqp.md) | Por qué el envelope del mensaje va en las propiedades de AMQP y no dentro del body |
+| [012](adr/012-una-extraccion-fallida-se-ackea.md) | Por qué una extracción fallida se ackea, y qué significa entonces la dead-letter queue |
 
 ---
 

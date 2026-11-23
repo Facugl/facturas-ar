@@ -16,16 +16,17 @@
 
 ## Estado actual
 
-**Fase 1, semanas 1-3, el export de la 5 y el outbox de la Fase 2.** El
-sistema ingesta un comprobante, le extrae los datos, y devuelve el
-período en un CSV que abre en Excel sin tocar nada. El lazo está cerrado
-de punta a punta, y entre la subida y la extracción ya hay una fila
-durable en vez de una llamada directa.
+**Fase 1, semanas 1-3, el export de la 5, y las semanas 1-2 de la Fase
+2.** El sistema ingesta un comprobante, le extrae los datos, y devuelve
+el período en un CSV que abre en Excel sin tocar nada. **La extracción ya
+no pasa en el request**: entre la subida y el procesamiento hay una fila
+durable en `outbox_event` y un RabbitMQ, así que el `POST` responde en
+medio segundo y el trabajo corre del otro lado de la cola.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, stack dockerizado, 290 tests (22 contra Postgres real), CI |
-| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y el resto de la Fase 2 (RabbitMQ, worker separado, DLQ, Redis) |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual y dead-letter queue**, stack dockerizado, 301 tests (31 contra Postgres y RabbitMQ reales), CI |
+| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y el resto de la Fase 2 (worker separado, consumidor de la DLQ con reintentos, Redis) |
 
 **La API hoy:** `POST /documents` · `GET /jobs/:id` ·
 `PUT /jobs/:id/confirm` · `GET /export/csv?from=&to=`
@@ -45,12 +46,16 @@ marca qué está hecho.
 > desarrollo sembrado al arrancar, y la aplicación lo grita en el log.
 > Llega en la semana 4.
 
-> **El outbox está, el broker no.** El evento se escribe en la misma
-> transacción que el `Job` y un relay lo publica, pero el transporte es
-> todavía este mismo proceso. Eso arregló el *dual-write*, que es un
-> problema de correctitud; la espera del usuario es un problema de
-> latencia y es lo que arregla la cola. Ver
-> [sección 8](#publicación-transactional-outbox) y el
+> **La cola está; el worker todavía no es un servicio aparte.** El
+> consumidor está escrito como consumidor de cola —lee el tipo y la
+> versión antes de confiar en el body, no hace nada que no pueda hacer
+> dos veces— pero corre adentro del `upload-api-service`. Mudarlo a
+> `ocr-worker-service` es la semana 3. Ver
+> [sección 8](#8-contratos-de-eventos).
+
+> **Probado con el broker caído.** Un `POST` con RabbitMQ detenido
+> devuelve `202` igual: el evento espera en la tabla y sale cuando el
+> broker vuelve. La medición está en el
 > [ADR 005](docs/adr/005-transactional-outbox.md).
 
 ---
@@ -64,8 +69,8 @@ tocar el código — la imagen compila adentro con el wrapper versionado.
 docker compose up -d --wait
 ```
 
-Levanta Postgres, el almacenamiento S3-compatible y la API, en ese orden,
-esperando a que cada uno esté sano. Después:
+Levanta Postgres, el almacenamiento S3-compatible, RabbitMQ y la API, en
+ese orden, esperando a que cada uno esté sano. Después:
 
 | Qué | Dónde |
 |---|---|
@@ -74,6 +79,7 @@ esperando a que cada uno esté sano. Después:
 | Métricas | http://localhost:8080/actuator/prometheus |
 | Postgres | `localhost:5433`, base/usuario/clave `facturas` |
 | Almacenamiento S3 | http://localhost:9090 |
+| **Consola de RabbitMQ** | http://localhost:15672 — `facturas`/`facturas` |
 
 > **Postgres va en el 5433 a propósito.** El 5432 suele estar ocupado por
 > una instalación nativa, y con los dos escuchando la aplicación se
@@ -86,6 +92,8 @@ esperando a que cada uno esté sano. Después:
 curl -F "file=@factura.pdf;type=application/pdf" localhost:8080/documents
 # 202 Accepted  {"jobId":"863f24b4-...","status":"PENDING","duplicate":false}
 
+# La extracción corre del otro lado de la cola, así que el POST vuelve
+# antes de que termine. Un GET inmediato muestra PENDING o PROCESSING:
 curl localhost:8080/jobs/863f24b4-...
 ```
 
@@ -274,7 +282,7 @@ Los diagramas se generan con [Archify](https://github.com/tt-a1i/archify) a part
 
 **[Abrir diagrama interactivo](docs/diagrams/flujo-factura.html)** · fuente: [flujo-factura.sequence.json](docs/diagrams/flujo-factura.sequence.json)
 
-> **Hoy:** el mismo flujo corre dentro del `upload-api-service`, sin RabbitMQ, Redis ni worker separado — la cascada de extracción se ejecuta en el request y el estado salta de `PENDING` a `EXTRACTED` en el mismo hilo. **El outbox sí está**: entre la subida y la extracción hay una fila durable en `outbox_event` y un relay que la publica, con este proceso como transporte. Lo que falta mover detrás de la cola es el transporte, no el modelo de datos ni los estados del `Job`. Ver sección 11 (Roadmap).
+> **Hoy:** falta Redis y falta el worker como servicio aparte. Todo lo demás de este diagrama está: la subida escribe el evento en `outbox_event` en su propia transacción, el relay lo publica a **RabbitMQ**, y un `@RabbitListener` con ack manual corre la cascada — en otro hilo, después de que el `POST` ya respondió. El consumidor está escrito como consumidor de cola, así que mudarlo a `ocr-worker-service` no cambia su cuerpo. Ver sección 11 (Roadmap).
 
 ### Regenerar los diagramas
 
@@ -702,19 +710,21 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 - springdoc-openapi (Swagger UI)
 
 ### Cola de mensajes
-- RabbitMQ 3.13.x
-- Exchange tipo `topic`
+- RabbitMQ 3.13.x — **en uso** ([sección 8](#8-contratos-de-eventos))
+- Exchange tipo `topic`, declarado por la aplicación con `RabbitAdmin`
 - Dead-letter exchange nativo de RabbitMQ
+- Confirmaciones del publisher (`publisher-confirm-type: simple`): el relay no marca un evento publicado hasta que el broker lo confirma
+- El envelope viaja en las propiedades de AMQP, no dentro del body ([ADR 011](docs/adr/011-el-envelope-viaja-en-las-propiedades-de-amqp.md))
 
 ### Worker de extracción
-- Java 21 + Spring Boot 4.1.1 (módulo separado, Fase 2)
+- Java 21 + Spring Boot 4.1.1 (módulo separado, semana 3 de la Fase 2)
 - **ZXing** (`com.google.zxing:core` + `com.google.zxing:javase`) — lectura del QR en PDF rasterizado y escaneos
 - **OpenCV** (`org.bytedeco:opencv`, compilado con `opencv_contrib`) — el detector de QR de WeChat, que es el que lee las fotos, más el preprocesamiento del OCR. **Juntas, la dependencia más importante del proyecto** ([ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md))
 - Apache PDFBox 3.x — texto embebido (`PDFTextStripper`) y rasterizado de la página para buscar el QR (`PDFRenderer`)
 - Jackson — parseo del JSON del QR (ya viene con Spring Boot)
 - Tess4J 5.x (Tesseract 5.3+ en el contenedor: `tesseract-ocr tesseract-ocr-spa`) — estrategia de último recurso
 - Parseo de texto: regex + Java puro, sin librería
-- `@RabbitListener` con `acknowledge-mode: manual`
+- `@RabbitListener` con `acknowledge-mode: manual` y `prefetch: 1`, ackeando después del commit ([ADR 012](docs/adr/012-una-extraccion-fallida-se-ackea.md))
 
 ### Redis
 - Redis 7.x, Spring Data Redis (Lettuce)
@@ -740,8 +750,20 @@ los eventos en vez de duplicarlos lo decide el lock, y hacen falta dos
 conexiones sosteniéndolo a la vez para verlo; y que un evento abandonado
 se publique **después** solo es cierto si la fila sobrevivió a un commit.
 
+`RabbitMessagingTest` es el tercero, y corre contra un RabbitMQ real por
+el mismo motivo: un `RabbitTemplate` mockeado le da la razón a lo que el
+test espera. Lo que está en duda es qué cruza el cable (el body se
+compara a nivel de `byte[]` contra lo que guardó el outbox), dónde
+termina un mensaje que el consumidor rechaza, y que uno que no reconoce
+no bloquee nada. Inspecciona los mensajes por una **segunda cola**
+bindeada al mismo exchange y routing key: un exchange topic entrega a
+todos los bindings que matchean, así que el test mira sin interferir —
+la otra opción era parar el listener, y un test que lo deja parado
+cuando falla rompe los que vienen después.
+
 Consecuencia práctica: **`./mvnw test` ahora necesita Docker corriendo.**
-El contenedor arranca una sola vez por JVM y Ryuk lo limpia al terminar.
+Los dos contenedores arrancan una sola vez por JVM y Ryuk los limpia al
+terminar.
 
 ### Export
 - CSV: Apache Commons CSV o OpenCSV (nunca a mano con StringBuilder)
@@ -828,7 +850,8 @@ uno, inofensivo en el otro: es el mejor caso posible para esa decisión.
 - Alternativa más rápida: Thymeleaf server-side dentro del Upload Service (descartada, mobile UX peor)
 
 ### Infraestructura local
-- Docker Compose. Hoy levanta lo que el código usa: **Postgres 16**, **Adobe S3Mock** y la propia API. RabbitMQ, Redis, Prometheus y Grafana entran en las Fases 2 y 3.
+- Docker Compose. Hoy levanta lo que el código usa: **Postgres 16**, **Adobe S3Mock**, **RabbitMQ 3.13** y la propia API. Redis, Prometheus y Grafana entran en las Fases 2 y 3.
+- La imagen de RabbitMQ es la `-management`: la consola en el `15672` (`facturas`/`facturas`) es la mitad de cómo se depura una cola, y poder abrirla y ver el mensaje adentro vale los MB.
 - La API se construye con un **Dockerfile multi-stage** que parte el jar en capas (`jarmode=tools extract --layers`). Importa: el jar pesa ~149 MB y copiarlo entero reescribía todo ante cualquier cambio; partido, la capa de código propio pesa 143 kB.
 - GitHub Actions: `./mvnw verify` y build de la imagen en cada push y PR a main
 
@@ -843,9 +866,12 @@ uno, inofensivo en el otro: es el mejor caso posible para esa decisión.
 ### Exchange
 
 ```
-Exchange: invoice.processing (tipo: topic)
-  └─ Routing key: job.extraction.requested → Queue: ocr.extraction.queue
-       (DLX tras agotar reintentos) → Queue: ocr.extraction.dlq
+invoice.processing (topic)
+  └─ key job.extraction.requested ──► ocr.extraction.queue   (durable)
+                                        │ nack, requeue=false
+                                        ▼
+invoice.processing.dlx (topic)
+  └─ key job.extraction.failed ─────► ocr.extraction.dlq     (durable)
 ```
 
 Config de la cola principal:
@@ -854,36 +880,74 @@ x-dead-letter-exchange: invoice.processing.dlx
 x-dead-letter-routing-key: job.extraction.failed
 ```
 
+**Declarada por la aplicación**, no a mano ni desde el compose: el
+`RabbitAdmin` de Spring crea lo que falte en cada arranque, así que un
+broker nuevo —otro entorno, un volumen borrado, un contenedor de
+Testcontainers— levanta con la topología correcta y sin un paso de setup
+que alguien pueda olvidar. Declarar es idempotente; declarar con
+argumentos **distintos** no, y falla fuerte — que es el comportamiento
+que conviene tener, porque es cómo se nota una cola cuya definición se
+desvió.
+
+**Topic para una sola routing key.** Un exchange directo haría lo mismo
+hoy. El motivo es que la routing key *es* el tipo de evento: el día que
+exista `job.extraction.completed`, un consumidor puede bindearse a
+`job.extraction.*` sin que el publisher se entere de que existe. Es la
+propiedad que hace que esto valga más que una llamada a un método, y hoy
+no cuesta nada.
+
+> Verificado contra el broker real:
+> ```
+> $ docker compose exec rabbitmq rabbitmqctl list_queues name durable messages arguments
+> ocr.extraction.queue  true  0  [{"x-dead-letter-exchange","invoice.processing.dlx"},
+>                                 {"x-dead-letter-routing-key","job.extraction.failed"}]
+> ocr.extraction.dlq    true  0  []
+> ```
+
 ### Evento: `job.extraction.requested`
 
 Escrito por el Upload Service en la tabla `OutboxEvent`, en la misma transacción que crea el `Job` en `PENDING`. Un relay lo publica después (ver abajo).
 
-```json
-{
-  "eventId": "a1b2c3d4-...",
-  "eventType": "job.extraction.requested",
-  "eventVersion": 1,
-  "occurredAt": "2026-10-05T03:00:00Z",
-  "payload": {
-    "jobId": "uuid",
-    "documentId": "uuid",
-    "storageKey": "documents/2026/10/uuid.pdf",
-    "mimeType": "application/pdf"
-  }
-}
+**El payload es el body del mensaje, verbatim. El envelope va en las
+propiedades que AMQP ya tiene para eso.**
+
+```
+routing key : job.extraction.requested
+message-id  : 5ec68b31-7c33-4785-970d-32e7fe09d74c   ← el eventId
+type        : job.extraction.requested
+headers     : { eventVersion: 1 }
+timestamp   : 2026-11-23T16:40:49.961Z               ← cuándo PASÓ
+content-type: application/json
+delivery-mode: 2 (persistent)
+
+body:
+{"jobId":"f13d2c5a-...","mimeType":"application/pdf",
+ "documentId":"0657e7ef-...","storageKey":"documents/2026/11/0657e7ef-....pdf"}
 ```
 
 - Payload liviano (solo `storageKey`, no el archivo ni datos parseados) — mantiene la cola rápida.
 - `eventId` + `eventVersion` desde el día 1: idempotencia, correlación de logs, evolución de schema sin romper compatibilidad entre despliegues no sincronizados.
 - Sin `userId`: el worker se mantiene "ciego" al concepto de usuario — separación de responsabilidades consciente.
+- El consumidor lee el **tipo y la versión antes de tocar el body**, que es lo que hay que hacer de todas formas.
 
-> **Este contrato llevaba un `sourceType` y se cayó al implementarlo.**
-> Distinguir `PDF_TEXT` de `PDF_SCANNED` exige abrir el archivo con
-> PDFBox, que es trabajo de la extracción y no de la subida — el mismo
-> motivo por el que la migración `V2` hizo nullable esa columna. En el
-> momento de escribir el evento el valor no existe, y mandar uno
-> adivinado sería peor que no mandar nada: el consumidor lo creería. El
-> campo salió del payload.
+> **Esto cambió al implementarlo, y vale decir cómo.** El contrato
+> especificaba un solo documento JSON con el payload anidado. Pero el
+> payload ya se guarda como **texto JSON** en el outbox, así que
+> serializar el envelope como objeto lo mete como un campo string y el
+> body queda `{"eventId":"...","payload":"{\"jobId\":\"...\"}"}`:
+> doble codificado, ilegible en la consola del broker, y hay que
+> parsearlo y volverlo a serializar para armarlo. Mapeando el envelope a
+> las propiedades de AMQP, **los bytes que se guardaron son los bytes
+> que se mandan** — sin reencodear, verificado a nivel de `byte[]` en
+> `RabbitMessagingTest`. Ver
+> [ADR 011](docs/adr/011-el-envelope-viaja-en-las-propiedades-de-amqp.md).
+
+> **El contrato también llevaba un `sourceType` y se cayó.** Distinguir
+> `PDF_TEXT` de `PDF_SCANNED` exige abrir el archivo con PDFBox, que es
+> trabajo de la extracción y no de la subida — el mismo motivo por el que
+> la migración `V2` hizo nullable esa columna. En el momento de escribir
+> el evento el valor no existe, y mandar uno adivinado sería peor que no
+> mandar nada: el consumidor lo creería. El campo salió del payload.
 
 ### Publicación: transactional outbox
 
@@ -901,7 +965,7 @@ La solución:
      SELECT * FROM outbox_event WHERE published_at IS NULL
        ORDER BY created_at LIMIT 100
        FOR UPDATE SKIP LOCKED
-     publicar
+     publicar a RabbitMQ  ── y ESPERAR la confirmación del broker
      UPDATE published_at = now()
 ```
 
@@ -909,30 +973,44 @@ La solución:
 - Si el relay publica y muere antes del `UPDATE`, el evento se publica dos veces — **y eso está bien**, porque el consumidor ya es idempotente (ver más abajo). At-least-once de punta a punta.
 - El `Job` nunca existe sin su evento, ni el evento sin su `Job`.
 
-**Esto funciona hoy** (`GET /documents` → `outbox_event` → relay →
-extracción), con una diferencia: el transporte es todavía este mismo
-proceso. Tres decisiones que el ADR original no tenía y que aparecieron
-al construirlo:
+**Esto funciona hoy**, de punta a punta: `POST /documents` →
+`outbox_event` → relay → RabbitMQ → consumidor → extracción. Cuatro
+decisiones que el ADR original no tenía y que aparecieron al
+construirlo:
 
 | Decisión | Por qué |
 |---|---|
 | **Dos disparadores** | El commit de la subida despierta al relay (camino normal: el evento sale en milisegundos) y un `@Scheduled` barre cada 5 s (recuperación: el proceso que murió justo después del commit, el transporte caído). Sin el barrido el outbox no tiene salida; sin el camino rápido cada subida espera al vacío |
 | **`FOR UPDATE SKIP LOCKED`** | Con dos disparadores hay dos relays que pueden correr a la vez. Sin el lock publicarían todo dos veces; con `FOR UPDATE` a secas el segundo esperaría al primero. `SKIP LOCKED` es lo que los hace repartir el trabajo — y lo que permite más de una réplica de la API sin tocar nada |
 | **`REQUIRES_NEW` en el relay** | El camino rápido corre en el callback *after-commit* de la subida, donde la transacción de la subida ya commiteó pero sigue siendo la actual. Una transacción `REQUIRED` se habría sumado a esa y los `UPDATE published_at` no habrían tenido efecto: sin error, y cada evento publicado de nuevo en el barrido siguiente |
+| **Esperar la confirmación del broker** | Un `send` que vuelve sin excepción solo significa que los bytes llegaron al socket. Un broker que muere antes de escribir el mensaje se lo lleva, mientras el relay ya marcó la fila como publicada — el evento se pierde sin rastro, que es la única falla que el outbox existe para descartar. Cuesta un round-trip por evento, y el caso normal es un evento por corrida |
 
-**Medido contra el stack real:** el camino rápido publicó en **22 ms**;
-un evento abandonado a mano lo levantó el barrido **2,1 s** después. Y
-al reentregarlo, el consumidor respondió `Job ... was not claimable;
-skipping` — el claim atómico absorbió el duplicado, que es el
-at-least-once demostrado y no solo afirmado.
+**Medido contra el stack real**, incluida la parte que importa — con el
+broker apagado:
+
+| | |
+|---|---|
+| Publicación por el camino rápido | **65 ms** desde el commit, confirmada por el broker |
+| Un evento abandonado a mano | lo levantó el barrido **2,1 s** después |
+| Al reentregarlo | `Job ... was not claimable; skipping` — el claim atómico absorbió el duplicado |
+| `POST /documents` con RabbitMQ **detenido** | **202 Accepted**, `PENDING`, fila esperando con `published_at IS NULL` |
+| Al volver el broker, 52 s después | el barrido la publicó, y el job quedó `EXTRACTED` 3 s más tarde |
+
+Nada se perdió y el usuario nunca vio un error. Esa última prueba
+destapó algo: el upload sobrevivía **por accidente**. El listener corre
+en la fase `afterCompletion`, y Spring loguea y descarta las excepciones
+de ahí — así que las subidas devolvían 202 mientras el log se llenaba de
+`ERROR TransactionSynchronization.afterCompletion` con stack trace, que
+se lee como si estuvieran fallando. Ahora `DrainOutboxOnUpload` atrapa su
+propia falla: la resiliencia deja de depender de qué fase usa el
+framework.
 
 > **[ADR 005 — Transactional outbox](docs/adr/005-transactional-outbox.md).** Junto con el del QR, lo más sustancioso que el proyecto tiene para contar.
 >
-> **Lo que falta:** el broker. Y con él, el `ack`, la reentrega de un
-> mensaje sin confirmar y la DLQ — hoy un consumidor que explota se
-> lleva la transacción del relay. Un evento que no se pueda publicar
-> nunca bloquea su lote para siempre; eso se arregla con reintentos por
-> evento y dead-letter, en la semana 3 de la Fase 2.
+> **Lo que falta:** mudar el consumidor a `ocr-worker-service`, y leer la
+> DLQ. Y del lado del relay, un evento que el broker rechace siempre hace
+> fallar su lote para siempre, porque el lote es una transacción: eso se
+> arregla con reintentos por evento, semana 3.
 
 ### Respuesta del worker: sin evento de vuelta (Opción A — DB compartida)
 
@@ -946,17 +1024,50 @@ at-least-once demostrado y no solo afirmado.
 3. Invalida (borra, no actualiza) la entrada de Redis para ese `jobId`.
 4. `ack` manual del mensaje recién después de confirmar la persistencia en DB.
 
-### Reintentos y dead-letter
+### Ack manual, y qué va a la dead-letter queue
+
+El consumidor usa `acknowledge-mode: manual`, así que cada mensaje
+termina en `basicAck` o en `basicNack(requeue=false)`. **Una extracción
+fallida se ackea**, y eso parece al revés a primera vista:
+
+| Situación | Qué hace | Por qué |
+|---|---|---|
+| Extracción OK | ack | Obvio |
+| Extracción falló, `Job` → `FAILED` | **ack** | `ExtractComprobante` ya atrapó la falla y la escribió. El mensaje hizo su trabajo: entregó un pedido que se llevó a cabo, y el resultado está anotado. El dueño de lo que viene es el reintentador |
+| Payload ilegible | nack, sin requeue | Ninguna reentrega lo va a hacer legible |
+| Versión ausente o desconocida | nack, sin requeue | Asumir la forma del payload es la falla que la versión existe para evitar |
+| Tipo de evento desconocido | **ack**, descartar | No es una falla, es un mensaje de otro. Nackearlo obligaría a un despliegue coordinado para agregar un tipo nuevo |
+| La base no responde | nack, sin requeue | El trabajo no se hizo **ni** se anotó |
+
+Así la DLQ significa una sola cosa: *este mensaje no se pudo procesar*.
+Una cola donde cae todo lo que salió mal no se puede mirar.
+
+**El ack va después del commit, nunca antes.** Ackear primero haría que
+una caída a mitad de la extracción pierda el mensaje para siempre,
+dejando un job en `PROCESSING` sin nada que lo reprocese. Ackear último
+hace que una caída termine en reentrega, que el claim atómico absorbe.
+De las dos fallas solo una tiene vuelta.
+
+**`requeue=false`, siempre.** Reencolar un mensaje que va a fallar igual
+es un bucle caliente: el broker lo reentrega tan rápido como pueda, para
+siempre.
+
+> **[ADR 012 — Una extracción fallida se ackea](docs/adr/012-una-extraccion-fallida-se-ackea.md).**
+
+### Reintentos (semana 3, pendiente)
+
+La cola está declarada y recibe lo inprocesable. **Nadie la lee
+todavía**: los mensajes se acumulan ahí a la vista, que es justamente por
+qué vale declararla ya — sin dead-letter exchange, un mensaje rechazado
+se **descarta** sin dejar rastro de que llegó.
 
 ```
-intento falla → Job.status = FAILED
-  → nack (requeue=false) → RabbitMQ rutea a DLX → ocr.extraction.dlq
-    → listener en DLQ incrementa Job.retry_count
-      → si retry_count < max_retries:
-            Job.status = FAILED → PENDING   ← vuelve a la única puerta de entrada
-            republica el evento (scheduled task simple, sin plugin de delay en v1)
-      → si retry_count >= max_retries:
-            Job.status = DEAD_LETTER, queda como registro histórico
+listener en DLQ incrementa Job.retry_count
+  → si retry_count < max_retries:
+        Job.status = FAILED → PENDING   ← vuelve a la única puerta de entrada
+        republica el evento (scheduled task simple, sin plugin de delay en v1)
+  → si retry_count >= max_retries:
+        Job.status = DEAD_LETTER, queda como registro histórico
 ```
 
 **Lo importante:** el reintento **no republica un job en `FAILED`**. Primero lo devuelve a `PENDING` y recién ahí publica. Si no, una copia vieja del mensaje original (el outbox puede publicar dos veces, ver arriba) sería indistinguible del reintento deliberado, y las dos se procesarían.
@@ -1018,7 +1129,7 @@ facturas-ar/
 ├── docs/
 │   ├── architecture.md
 │   ├── diagrams/                 # JSON de Archify + HTML/PNG generados
-│   ├── adr/                        # 10 decisiones, con sus alternativas
+│   ├── adr/                        # 12 decisiones, con sus alternativas
 │   └── api/
 ├── pom.xml                         # parent, packaging=pom
 │
@@ -1047,13 +1158,13 @@ facturas-ar/
 │   ├── src/main/resources/db/migration/   # Flyway: Postgres es de las migraciones
 │   └── src/main/java/.../upload/
 │       ├── adapters/in/rest/       # Document, Job, Export + manejo de errores
-│       ├── adapters/in/messaging/  # ExtractionRequestListener: el consumidor.
-│       │                           #   En Fase 2 pasa a ser @RabbitListener
-│       │                           #   en el worker, y el cuerpo no cambia
+│       ├── adapters/in/messaging/  # ExtractionRequestListener: @RabbitListener
+│       │                           #   con ack manual. Se muda al worker en la
+│       │                           #   semana 3 y el cuerpo no cambia
 │       ├── adapters/out/persistence/   # repositorios Spring Data
 │       ├── adapters/out/storage/   # S3DocumentStorage
-│       ├── adapters/out/messaging/ # InProcessOutboxPublisher: el transporte
-│       │                           #   de la Fase 1, en lugar de RabbitTemplate
+│       ├── adapters/out/messaging/ # RabbitOutboxPublisher: espera la
+│       │                           #   confirmación del broker antes de volver
 │       ├── application/usecase/    # UploadComprobante, ExtractComprobante,
 │       │                           #   ExportComprobantes
 │       ├── application/outbox/     # Outbox (escribe), OutboxRelay (vacía),
@@ -1061,9 +1172,10 @@ facturas-ar/
 │       ├── application/event/      # ComprobanteUploaded + DrainOutboxOnUpload
 │       ├── application/export/     # ComprobanteCsvWriter: las reglas Excel-AR
 │       ├── application/port/       # CurrentUser
-│       └── config/                 # almacenamiento S3, cascada, usuario de dev
+│       └── config/                 # S3, cascada, usuario de dev, RabbitTopology
 │
 ├── shared-events/                  # contratos de los mensajes, cero dependencias
+│   │                               #   (ni Jackson: ver ADR 011)
 │   └── src/main/java/.../events/
 │       ├── DomainEvent.java        # un payload que sabe cómo se llama en el cable
 │       ├── JobExtractionRequested.java
@@ -1175,8 +1287,8 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | Semana | Foco | |
 |---|---|---|
 | 1 | ~~Aprender RabbitMQ~~ → **contrato de evento + transactional outbox y su relay** | ✅ |
-| 2 | RabbitMQ en el medio (exchange, queue, routing key, ack): el relay publica al broker y un `@RabbitListener` consume, todavía en el mismo servicio | ⬜ |
-| 3 | Separar `ocr-worker-service` · DLQ, reintentos, idempotencia del consumidor, invalidación de cache Redis | ⬜ |
+| 2 | **RabbitMQ en el medio** (exchange, queue, routing key, ack manual, DLX): el relay publica al broker y un `@RabbitListener` consume, todavía en el mismo servicio | ✅ |
+| 3 | Separar `ocr-worker-service` · consumidor de la DLQ con reintentos, invalidación de cache Redis | ⬜ |
 | 4 (buffer) | Testing de casos de falla con Testcontainers: matar el worker a mitad de un job, tirar abajo el broker con eventos pendientes en el outbox | ⬜ |
 
 > **Las semanas 1 y 2 se dieron vuelta, y vale decir por qué.** El plan
@@ -1189,6 +1301,16 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 > en vez de con vocabulario abstracto. En cada paso el sistema sigue
 > funcionando de punta a punta, que es mejor historia que una
 > reescritura asincrónica de una sola vez.
+>
+> Salió bien: el broker entró el mismo día, y el reemplazo del
+> transporte no tocó una línea arriba del puerto `OutboxPublisher`. Eso
+> es lo que el orden invertido compró — una costura probada antes de
+> apoyarse en ella.
+
+> **La idempotencia del consumidor salió de la semana 3 porque ya
+> estaba.** El claim atómico del [ADR 007](docs/adr/007-claim-atomico.md)
+> se implementó en la Fase 1, y la primera reentrega real contra el
+> broker confirmó que alcanza: `was not claimable; skipping`.
 
 ### Fase 3 — Observabilidad (1.5-2 semanas)
 

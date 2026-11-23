@@ -1,7 +1,7 @@
 # 005 — Transactional outbox para publicar el evento
 
-**Estado:** aceptada · **implementada** (transporte in-process; RabbitMQ pendiente)
-**Fecha:** 2026-10-17 · **implementada:** 2026-11-23
+**Estado:** aceptada · **implementada**
+**Fecha:** 2026-10-17 · **implementada:** 2026-11-23 (con RabbitMQ el mismo día)
 
 ## Contexto
 
@@ -86,11 +86,16 @@ OutboxRelay.drain()  (transacción propia, REQUIRES_NEW)
       ORDER BY created_at LIMIT 100
       FOR UPDATE SKIP LOCKED
     publisher.publish(envelope)     ← OutboxPublisher (el puerto)
+      └─ espera la confirmación del broker
     markPublished()
   COMMIT
       │
-      └─ ExtractionRequestListener ──► ExtractComprobante
-            (hoy @TransactionalEventListener; en Fase 2, @RabbitListener)
+      ▼
+  RabbitMQ: invoice.processing ──key job.extraction.requested──►
+              ocr.extraction.queue
+      │
+      └─ ExtractionRequestListener (@RabbitListener, ack manual)
+              └─► ExtractComprobante
 ```
 
 ### Tres decisiones que el ADR original no tenía
@@ -110,25 +115,68 @@ mismo motivo por el que la `V2` hizo nullable esa columna. Mandar un
 valor adivinado sería peor que no mandar nada, porque el consumidor lo
 creería. El campo salió del contrato.
 
+### El broker llegó el mismo día
+
+El `OutboxPublisher` nació con una implementación in-process, como
+andamio, y duró unas horas: `RabbitOutboxPublisher` la reemplazó y la
+in-process se borró. Que el reemplazo no haya tocado nada arriba del
+puerto es la prueba de que el puerto estaba en el lugar correcto.
+
+Dos decisiones que salieron de conectarlo, cada una con su ADR:
+[011](011-el-envelope-viaja-en-las-propiedades-de-amqp.md) (el envelope
+viaja en las propiedades de AMQP, no dentro del body) y
+[012](012-una-extraccion-fallida-se-ackea.md) (una extracción fallida se
+ackea; la DLQ es para lo que no se puede procesar).
+
+Y una tercera, que vive en el publisher: **el relay espera la
+confirmación del broker** antes de marcar el evento publicado. Sin eso,
+un `send` que vuelve sin excepción solo significa que los bytes llegaron
+al socket — un broker que muere antes de escribir el mensaje se lo lleva
+mientras el relay ya marcó la fila. El evento se perdería sin rastro, que
+es la única falla que este ADR existe para descartar. Cuesta un
+round-trip por evento, y el caso normal es un evento por corrida.
+
 ### Lo que todavía no está
 
-**El broker.** El `OutboxPublisher` tiene una sola implementación,
-`InProcessOutboxPublisher`, que despacha un evento de Spring dentro del
-mismo proceso. Hace el viaje de ida y vuelta por JSON de verdad, así que
-un payload que no sobreviva la serialización falla hoy y no el día que
-entre RabbitMQ. Lo que no reproduce es el límite de proceso: no hay
-`ack`, no hay reentrega de un mensaje sin confirmar, y un consumidor que
-explota se lleva la transacción del relay en vez de que el mensaje vaya
-a una DLQ.
+**El worker separado.** El consumidor está escrito como consumidor de
+cola —lee tipo y versión antes de confiar en el body, no hace nada que no
+pueda hacer dos veces— pero todavía corre adentro del
+`upload-api-service`. Mudarlo a `ocr-worker-service` es la semana 3.
 
-**El veneno en la cola.** Un evento que no se pueda publicar nunca
-—un payload que el transporte rechace— hace fallar su lote para siempre
-y bloquea todo lo que está detrás, porque el lote es una transacción.
-La solución es conteo de reintentos por evento y una salida a
-dead-letter, que es la semana 3 de la Fase 2. Un `try/catch` por evento
-no lo arreglaría: saltearía el evento y lo dejaría pendiente igual.
+**El consumidor de la DLQ.** La cola está declarada y recibe lo
+inprocesable, pero nadie la lee. El bucle que incrementa `retry_count` y
+manda el job de vuelta a `PENDING` es la semana 3. Declararla igual no es
+preparación vacía: sin dead-letter exchange, un mensaje rechazado se
+**descarta**, y con ella queda estacionado donde se puede mirar.
+
+**El veneno en el relay.** Un evento que el broker rechace siempre hace
+fallar su lote para siempre y bloquea todo lo que está detrás, porque el
+lote es una transacción. La solución es conteo de reintentos por evento,
+igual que del lado del consumidor. Un `try/catch` por evento no lo
+arreglaría: saltearía el evento y lo dejaría pendiente igual.
 
 **La poda.** Las filas publicadas se quedan. Hoy sirven de auditoría y
 el volumen es un evento por comprobante subido, pero crece sin techo.
 Cuánto retener no se puede decidir sin medir primero, así que va con las
 métricas de la Fase 3.
+
+### Medido contra el stack real, con el broker caído
+
+Lo que el ADR prometía desde octubre, comprobado:
+
+| | |
+|---|---|
+| `POST /documents` con RabbitMQ detenido | **202 Accepted**, `status: PENDING` |
+| La fila en `outbox_event` | `published_at IS NULL`, esperando |
+| Al volver el broker, 52 s después | el barrido la publicó |
+| El job | `EXTRACTED`, 3 s más tarde |
+
+Nada se perdió y el usuario nunca vio un error. Eso también destapó un
+problema: el upload sobrevivía **por accidente**. El listener corre en la
+fase `afterCompletion` de la sincronización, y Spring loguea y descarta
+las excepciones de ahí — así que las subidas seguían devolviendo 202
+mientras el log se llenaba de `ERROR
+TransactionSynchronization.afterCompletion` con stack trace, que se lee
+como si las subidas estuvieran fallando. Ahora `DrainOutboxOnUpload`
+atrapa su propia falla: la resiliencia deja de depender de qué fase usa
+el framework, y el log dice lo que realmente pasó.

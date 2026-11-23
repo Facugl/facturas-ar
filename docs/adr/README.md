@@ -14,12 +14,14 @@ pierde rápido, y es lo único que sirve cuando hay que revisarla.
 | [002](002-tesseract-y-no-paddleocr.md) | Tesseract y no PaddleOCR | Aceptada |
 | [003](003-estados-del-job.md) | Los estados del Job y sus transiciones | Aceptada · implementada |
 | [004](004-qr-primero-ocr-de-respaldo.md) | **QR primero, OCR de último recurso** | Aceptada · implementada |
-| [005](005-transactional-outbox.md) | **Transactional outbox para publicar el evento** | Aceptada · implementada (transporte in-process) |
+| [005](005-transactional-outbox.md) | **Transactional outbox para publicar el evento** | Aceptada · implementada |
 | [006](006-dos-servicios-una-base.md) | Dos servicios sobre una base: por qué no son microservicios | Aceptada |
 | [007](007-claim-atomico.md) | Claim atómico y una sola puerta de reproceso | Aceptada · implementada |
 | [008](008-deduplicacion-en-tres-capas.md) | Deduplicación en tres capas | Aceptada · implementada |
 | [009](009-deteccion-del-qr-en-el-cliente.md) | El QR se detecta en el cliente, no en el servidor | Premisa refutada · pendiente (semana 4) |
 | [010](010-dos-motores-para-leer-el-qr.md) | **Dos motores para leer el QR, y OpenCV para las fotos** | Aceptada · implementada |
+| [011](011-el-envelope-viaja-en-las-propiedades-de-amqp.md) | El envelope viaja en las propiedades de AMQP, no dentro del body | Aceptada · implementada |
+| [012](012-una-extraccion-fallida-se-ackea.md) | **Una extracción fallida se ackea; la DLQ es para lo que no se puede procesar** | Aceptada · implementada |
 
 Hay una cadena de correcciones acá, y vale leerla en orden. El
 [009](009-deteccion-del-qr-en-el-cliente.md) revisa al
