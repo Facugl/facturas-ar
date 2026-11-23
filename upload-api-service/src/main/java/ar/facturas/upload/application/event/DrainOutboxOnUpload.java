@@ -3,6 +3,7 @@ package ar.facturas.upload.application.event;
 import ar.facturas.upload.application.outbox.OutboxRelay;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -63,8 +64,10 @@ public class DrainOutboxOnUpload {
      */
     @TransactionalEventListener
     public void on(ComprobanteUploaded event) {
-        log.debug("Upload of job {} committed; draining the outbox", event.jobId());
-        try {
+        // Set again here: this runs after the upload's method returned,
+        // so the context it had is already gone. Same thread, new scope.
+        try (var ignored = MDC.putCloseable("jobId", event.jobId().toString())) {
+            log.debug("Upload of job {} committed; draining the outbox", event.jobId());
             relay.drain();
         } catch (RuntimeException e) {
             log.warn("Could not publish the event for job {} right away. It stays pending "

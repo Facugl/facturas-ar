@@ -1,0 +1,17 @@
+# Datasource provisionado, no configurado a mano por la consola.
+#
+# El motivo es el mismo por el que la topología de RabbitMQ la declara la
+# aplicación: lo que se configura clickeando se pierde al recrear el
+# contenedor y no queda en el repositorio. Esto levanta igual en cualquier
+# máquina, sin un paso que alguien tenga que recordar.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # Nombre del servicio adentro de la red de compose, puerto INTERNO.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

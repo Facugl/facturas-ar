@@ -7,6 +7,7 @@ import ar.facturas.infrastructure.messaging.RabbitTopology;
 import com.rabbitmq.client.Channel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
@@ -65,6 +66,16 @@ public class DeadLetterListener {
 
     @RabbitListener(queues = RabbitTopology.DLQ)
     public void on(Message message, Channel channel) throws IOException {
+        MDC.put("eventId", String.valueOf(message.getMessageProperties().getMessageId()));
+        try {
+            handle(message, channel);
+        } finally {
+            MDC.remove("eventId");
+            MDC.remove("jobId");
+        }
+    }
+
+    private void handle(Message message, Channel channel) throws IOException {
         long deliveryTag = message.getMessageProperties().getDeliveryTag();
         String messageId = message.getMessageProperties().getMessageId();
 
@@ -85,6 +96,7 @@ public class DeadLetterListener {
             }
 
             metrics.deadLetterReceived("traced");
+            MDC.put("jobId", jobId.get().toString());
             RequeueJob.Outcome outcome = requeueJob.execute(jobId.get(),
                     "its request was rejected by the consumer and dead-lettered");
             log.info("Dead-letter message {} resolved as {} for job {}",

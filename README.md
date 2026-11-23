@@ -16,8 +16,7 @@
 
 ## Estado actual
 
-**Fase 1, semanas 1-3 y el export de la 5. Fase 2 completa. Fase 3,
-semana 1.** El sistema ingesta un comprobante, le extrae los
+**Fase 1, semanas 1-3 y el export de la 5. Fase 2 y Fase 3 completas.** El sistema ingesta un comprobante, le extrae los
 datos, y devuelve el período en un CSV que abre en Excel sin tocar nada.
 **La extracción no pasa en el request y no pasa en el mismo proceso**:
 entre la subida y el procesamiento hay una fila durable en
@@ -27,8 +26,8 @@ vuelve solo; y todo eso se mide en Prometheus.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus**, stack dockerizado, 332 tests (53 contra Postgres, RabbitMQ y Redis reales), CI |
-| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y los dashboards de Grafana |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, stack dockerizado, 332 tests (53 contra Postgres, RabbitMQ y Redis reales), CI |
+| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend y autenticación — es decir, **la semana 4 de la Fase 1 y la mitad de la 5** |
 
 **La API hoy:** `POST /documents` · `GET /jobs/:id` ·
 `PUT /jobs/:id/confirm` · `GET /export/csv?from=&to=`
@@ -71,9 +70,9 @@ tocar el código — la imagen compila adentro con el wrapper versionado.
 docker compose up -d --wait
 ```
 
-Levanta Postgres, el almacenamiento S3-compatible, RabbitMQ, Redis, la
-API, el worker y Prometheus, en ese orden, esperando a que cada uno esté
-sano. Después:
+Levanta los ocho servicios —Postgres, almacenamiento S3-compatible,
+RabbitMQ, Redis, la API, el worker, Prometheus y Grafana— en ese orden,
+esperando a que cada uno esté sano. Después:
 
 | Qué | Dónde |
 |---|---|
@@ -85,6 +84,7 @@ sano. Después:
 | **Consola de RabbitMQ** | http://localhost:15672 — `facturas`/`facturas` |
 | **Prometheus** | http://localhost:9091 — el `9090` lo usa S3Mock |
 | Redis | `localhost:6379` |
+| **Grafana** | http://localhost:3000 — abre directo en el dashboard, sin login |
 
 > **Postgres va en el 5433 a propósito.** El 5432 suele estar ocupado por
 > una instalación nativa, y con los dos escuchando la aplicación se
@@ -862,8 +862,20 @@ uno, inofensivo en el otro: es el mejor caso posible para esa decisión.
 ### Observabilidad
 
 Micrometer (Spring Boot Actuator) + `micrometer-registry-prometheus`,
-scrapeado por **Prometheus 2.54** desde `/actuator/prometheus`. Grafana
-entra con los dashboards.
+scrapeado por **Prometheus 2.54** desde `/actuator/prometheus` en los dos
+servicios, y **un dashboard de Grafana 11 provisionado desde el
+repositorio**.
+
+> **Ni el datasource ni los paneles se configuran por la consola.** Lo
+> que se configura clickeando se pierde al recrear el contenedor y no
+> queda versionado — es el mismo motivo por el que la topología de
+> RabbitMQ la declara la aplicación y no un script. `allowUiUpdates:
+> false`: el dashboard vive en el repositorio o no vive.
+
+**El tablero habla del problema, no de la máquina.** No hay un solo panel
+de CPU. Lo que se mira es: si los comprobantes entregan su QR, si los
+eventos salen, cuánto tarda una extracción, qué hace la recuperación
+cuando algo falla, y de dónde sale cada campo.
 
 **Las métricas que publica hoy.** Todas contestan una pregunta que
 alguien tiene de verdad; los nombres y los tags viven en un solo archivo
@@ -918,10 +930,61 @@ devuelve vacío, que se ve igual que un sistema sano.
 
 **Lo que falta:** `invoice.field.correction.rate` necesita el formulario
 de revisión (no hay correcciones que contar todavía) e
-`invoice.ocr.confidence` necesita el OCR. Logs estructurados JSON y
-dashboards de Grafana, con la semana 2 de la Fase 3.
+`invoice.ocr.confidence` necesita el OCR. Las dos entran con el código
+que las produce.
 
 > Un dashboard con "tasa de detección de QR" y "origen de cada campo" es mucho más interesante de mostrar que uno con uso de CPU: habla del problema, no de la máquina.
+
+### Logs estructurados
+
+En JSON, formato ECS (Elastic Common Schema).
+
+> **Sin `logstash-logback-encoder`, que es lo que esta sección
+> especificaba.** Spring Boot 4 lo trae nativo
+> (`logging.structured.format.console`), así que la dependencia no hace
+> falta. Una menos que mantener, por algo que ahora viene en la caja.
+
+**El formato solo se activa adentro de los contenedores**
+(`LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` en el compose). Corriendo el jar
+a mano los logs quedan legibles para una persona, que es quien los lee en
+ese caso.
+
+**Lo que los hace servir para algo más que verse prolijos: el `eventId` y
+el `jobId` en el MDC.** Con eso un pedido se sigue **desde la fila del
+outbox hasta la extracción, cruzando los dos servicios**, sin un sistema
+de tracing:
+
+**Medido contra el stack**, filtrando por el **campo** `jobId` y no por
+el texto del mensaje:
+
+```
+[upload-api-service]  event=-         Comprobante uploaded: job=1ebea4f9…
+[upload-api-service]  event=-         Upload of job 1ebea4f9… committed; draining…
+[upload-api-service]  event=ece2ab5f  Published job.extraction.requested v1
+[ocr-worker-service]  event=ece2ab5f  Can't dereference COSObject{1 0 R}
+[ocr-worker-service]  event=ece2ab5f  Can't dereference COSObject{1 0 R}
+[ocr-worker-service]  event=ece2ab5f  Job 1ebea4f9… extracted: 0 fields, qr=false
+```
+
+Las dos primeras no tienen `eventId` porque todavía no existe: el evento
+nace cuando el relay lo publica. Y las dos del medio **son de PDFBox** —
+el MDC aplica a todo lo que se loguea en ese hilo, así que la queja de
+una librería de terceros sale estampada con el comprobante que estaba
+leyendo, sin que PDFBox sepa nada. Eso es la mitad del valor.
+
+Es el **mismo id en los tres lugares**: la clave primaria de la fila del
+outbox, el `message-id` del mensaje AMQP y la línea de log de los dos
+servicios ([ADR 011](docs/adr/011-el-envelope-viaja-en-las-propiedades-de-amqp.md)).
+No se diseñó para esto — igual que el truco del `message-id` para
+rastrear un mensaje ilegible en la DLQ.
+
+> El MDC se limpia **siempre** en un `finally`. Un hilo de listener se
+> reusa del pool: una clave que queda colgada le estampa al mensaje
+> siguiente el id del anterior, y eso es peor que no tener contexto.
+
+**Micrometer Tracing + Zipkin** sigue siendo opcional. Con el `eventId`
+correlacionando las dos puntas, lo que agregaría es el span y el timing
+distribuido — útil, pero ya no es lo que falta para poder depurar.
 
 ### Frontend
 - React + Vite, sin Redux (React Query alcanza para polling de estado)
@@ -1346,8 +1409,10 @@ facturas-ar/
 │   └── src/
 │
 ├── monitoring/
-│   ├── prometheus/prometheus.yml   # scrapea /actuator/prometheus
-│   └── grafana/{provisioning,dashboards}/   # FASE 3, semana 2
+│   ├── prometheus/prometheus.yml   # scrapea los DOS servicios
+│   └── grafana/
+│       ├── provisioning/           # datasource y provider, versionados
+│       └── dashboards/pipeline.json    # 8 paneles, ningún de CPU
 │
 └── scripts/
     └── seed-demo-data.sh
@@ -1481,7 +1546,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | Semana | Foco | |
 |---|---|---|
 | 1 | **Actuator + Micrometer, métricas custom** (empezando por la tasa de detección de QR con tag `source`, ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md), y el origen por campo), **Prometheus scrapeando los dos servicios** | ✅ |
-| 2 (parcial) | Dashboards Grafana, logs estructurados | ⬜ |
+| 2 (parcial) | **Dashboard de Grafana provisionado** + **logs estructurados en JSON con `eventId`/`jobId` en el MDC** | ✅ |
 
 > **La semana 1 se adelantó, y por un motivo concreto.** El
 > `application.yml` del reaper decía que su timeout "sale de medir
@@ -1500,6 +1565,19 @@ Pulido de UX/responsive, screenshots/demo para el portfolio, README con diagrama
 
 1. No es necesario esperar a que el proyecto esté 100% terminado para aplicar a trabajos — con Fase 1-2 completas ya es un proyecto mostrable en una entrevista ("en progreso, con async y caching ya implementados").
 2. Priorizar que cada fase quede *documentada* (ADRs, README) antes de pasar a la siguiente, por sobre agregar más alcance — es lo que se evalúa en una entrevista, no el volumen de features.
+
+> **Las fases no salieron en orden, y vale decir por qué.** Las Fases 2 y
+> 3 están completas mientras la Fase 1 tiene la semana 4 entera pendiente.
+> No fue improvisación: todo lo que faltaba de la 2 y la 3 es backend, y
+> es lo que este proyecto existe para demostrar (ver [sección 1](#1-visión-y-objetivo)).
+> La semana 4 es frontend.
+>
+> El costo de ese orden es concreto y conviene tenerlo a la vista:
+> `FieldCorrection` sigue con **cero filas** —una apuesta de diseño del
+> día 1 que todavía no produjo nada, porque necesita el formulario—, no
+> hay autenticación, y todo lo construido se demuestra con `curl`,
+> `psql` y PromQL en vez de con una pantalla. Lo que desbloquea las tres
+> de una vez es la semana 4.
 
 ---
 

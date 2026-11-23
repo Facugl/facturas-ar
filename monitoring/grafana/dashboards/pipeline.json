@@ -1,0 +1,401 @@
+{
+  "uid": "facturas-pipeline",
+  "title": "facturas-ar · pipeline",
+  "description": "Habla del problema, no de la maquina. No hay un solo panel de CPU: lo que se mira aca es si los comprobantes entregan su QR, si los eventos salen, cuanto tarda una extraccion y que hace la recuperacion cuando algo falla.",
+  "tags": [
+    "facturas",
+    "pipeline"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Lo que dice si el sistema esta sano",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Tasa de deteccion de QR",
+      "description": "La metrica mas importante del sistema: es la diferencia entre un dato exacto y uno adivinado. Si cae, el pipeline entero vale menos. El tag `source` dice quien lo leyo (hoy solo el servidor; el navegador llega en la semana 4).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 6,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(invoice_qr_detection_total{source!=\"ninguno\"}) / clamp_min(sum(invoice_qr_detection_total), 1)",
+          "legendFormat": "leido"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Eventos sin publicar",
+      "description": "Cuantos eventos esperan en el outbox. Sostenido arriba de cero significa que el transporte esta mal: el camino rapido no publica y el barrido tampoco. Es la alerta mas util del tablero.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 6,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(invoice_outbox_pending)",
+          "legendFormat": "pendientes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Comprobantes por como salieron",
+      "description": "Un `failed` constante no es una falla del sistema: un archivo ilegible deja el formulario vacio y el documento guardado igual (criterio de aceptacion 5). Lo que importa es la tendencia.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 12,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (outcome) (rate(invoice_job_processing_time_seconds_count[5m])) * 60",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "La cola y el outbox",
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Latencia del relay (p50 / p95 / p99)",
+      "description": "El hueco entre que el evento PASO y que salio. Cerca de cero cuando publica el camino rapido de la subida; hasta un intervalo de barrido cuando lo levanta el barrido. Una cola larga es exactamente lo que dice que el camino rapido esta fallando.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(invoice_outbox_publish_latency_seconds_bucket[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(invoice_outbox_publish_latency_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(invoice_outbox_publish_latency_seconds_bucket[5m])))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Tiempo de extraccion (p50 / p95 / p99)",
+      "description": "De donde sale el timeout del reaper, que hoy son 2 minutos. Si el p99 se acerca a ese numero, el reaper empieza a robarle jobs a workers que todavia trabajan y deja de ser recuperacion para volverse duplicacion. Volver a mirar esto cuando entre el OCR.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(invoice_job_processing_time_seconds_bucket{outcome=\"extracted\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(invoice_job_processing_time_seconds_bucket{outcome=\"extracted\"}[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(invoice_job_processing_time_seconds_bucket{outcome=\"extracted\"}[5m])))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "Cuando algo sale mal",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Recuperaciones, por que se decidio",
+      "description": "Que esta haciendo el reaper. `requeued` es un job que volvio; `dead_lettered` es uno que gasto sus intentos y necesita una persona; `republished` es un pedido que se perdio sin que nadie lo haya intentado. Un cero constante aca puede significar que nada falla o que el reaper no esta corriendo, y por eso tambien conviene mirarlo.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (outcome) (increase(invoice_recovery_moves_total[1h]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Reentregas que el claim absorbio",
+      "description": "At-least-once significa que esto pasa, y el UPDATE condicional es lo que lo absorbe. Un cero CONSTANTE seria la mala noticia: significaria que la idempotencia nunca se ejercito en produccion, y conviene saberlo antes de confiar en ella. Un pico es la otra senal: el cutoff del reaper quedo corto.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 17,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(invoice_job_duplicate_delivery_total[1h]))",
+          "legendFormat": "reentregas"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (resolution) (increase(invoice_deadletter_received_total[1h]))",
+          "legendFormat": "DLQ {{resolution}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 400,
+      "type": "row",
+      "title": "De donde sale cada campo",
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 8,
+      "type": "barchart",
+      "title": "Origen de cada campo",
+      "description": "Que proporcion de cada campo viene del QR, del texto embebido o del OCR. Dice exactamente donde invertir esfuerzo de parseo: el campo que mas depende del OCR es el que mas se va a equivocar. Hoy los doce del QR vienen del QR y la razon social del texto, que es la tesis de la cascada hecha grafico.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (field, source) (invoice_extraction_source_total)",
+          "legendFormat": "{{field}} · {{source}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
+  ]
+}

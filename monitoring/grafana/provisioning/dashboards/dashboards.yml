@@ -1,0 +1,14 @@
+# Carga los dashboards del directorio, en vez de que haya que importarlos.
+
+apiVersion: 1
+
+providers:
+  - name: facturas
+    type: file
+    # false: si alguien edita un panel por la consola, el cambio se
+    # pierde al reiniciar. Es a propósito — el dashboard vive en el
+    # repositorio o no vive.
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

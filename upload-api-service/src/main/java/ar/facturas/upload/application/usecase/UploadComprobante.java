@@ -12,6 +12,7 @@ import ar.facturas.upload.application.event.ComprobanteUploaded;
 import ar.facturas.upload.application.outbox.Outbox;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -90,25 +91,38 @@ public class UploadComprobante {
         Job job = new Job(UUID.randomUUID(), document, MAX_RETRIES);
         jobs.save(job);
 
-        // The event goes into the same transaction as the job. Either
-        // both rows exist or neither does, which is the only way to
-        // guarantee that no job is ever left waiting for a message that
-        // was never written. See ADR 005.
-        outbox.record(job.getId(), new JobExtractionRequested(
-                job.getId(), document.getId(), storageKey, command.contentType()));
+        // From here on every line logged on this thread carries the job,
+        // which is most of what structured logs are for: PDFBox
+        // complaining about a malformed file comes out stamped with the
+        // comprobante it was reading, without PDFBox knowing anything.
+        //
+        // try-with-resources and not put/remove: a request thread is
+        // pooled and reused, so a key left behind by an exception on the
+        // way out would stamp the NEXT upload with this job's id. The
+        // relay and the listeners set their own and clear their own, for
+        // the same reason.
+        try (var ignored = MDC.putCloseable("jobId", job.getId().toString())) {
+            // The event goes into the same transaction as the job.
+            // Either both rows exist or neither does, which is the only
+            // way to guarantee that no job is ever left waiting for a
+            // message that was never written. See ADR 005.
+            outbox.record(job.getId(), new JobExtractionRequested(
+                    job.getId(), document.getId(), storageKey, command.contentType()));
 
-        log.info("Comprobante uploaded: job={} document={} bytes={}",
-                job.getId(), document.getId(), command.content().length);
+            log.info("Comprobante uploaded: job={} document={} bytes={}",
+                    job.getId(), document.getId(), command.content().length);
 
-        // A doorbell for the relay, raised after the row is written so
-        // that it has something to find. Losing it costs latency and
-        // nothing else: the periodic sweep publishes the same event a
-        // few seconds later. That is the whole difference between this
-        // and the outbox row above.
-        events.publishEvent(new ComprobanteUploaded(job.getId()));
+            // A doorbell for the relay, raised after the row is written
+            // so that it has something to find. Losing it costs latency
+            // and nothing else: the periodic sweep publishes the same
+            // event a few seconds later. That is the whole difference
+            // between this and the outbox row above.
+            events.publishEvent(new ComprobanteUploaded(job.getId()));
 
-        return new UploadComprobanteResult(
-                job.getId(), document.getId(), job.getStatus(), false, document.getUploadedAt());
+            return new UploadComprobanteResult(
+                    job.getId(), document.getId(), job.getStatus(), false,
+                    document.getUploadedAt());
+        }
     }
 
     private UploadComprobanteResult asDuplicate(Document document) {

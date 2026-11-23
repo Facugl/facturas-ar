@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
+import org.slf4j.MDC;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
@@ -66,6 +67,26 @@ public class ExtractionRequestListener {
 
     @RabbitListener(queues = Topology.QUEUE)
     public void on(Message message, Channel channel) throws IOException {
+        // The event id goes into the logging context for the whole
+        // handling, and it is the one value that makes a job traceable
+        // across both services: the API logs it when it publishes, this
+        // service logs it on every line while it works. Same id as the
+        // outbox row's primary key and the AMQP message-id (ADR 011), so
+        // one query follows a request from the table to the extraction.
+        //
+        // Cleared in a finally, always. A listener thread is pooled and
+        // reused: a key left behind would stamp the next message with
+        // the previous one's id, which is worse than no context at all.
+        MDC.put("eventId", String.valueOf(message.getMessageProperties().getMessageId()));
+        try {
+            handle(message, channel);
+        } finally {
+            MDC.remove("eventId");
+            MDC.remove("jobId");
+        }
+    }
+
+    private void handle(Message message, Channel channel) throws IOException {
         long deliveryTag = message.getMessageProperties().getDeliveryTag();
         boolean redelivered = message.getMessageProperties().isRedelivered();
 
@@ -86,6 +107,7 @@ public class ExtractionRequestListener {
             }
 
             jobId = json.readValue(envelope.payload(), JobExtractionRequested.class).jobId();
+            MDC.put("jobId", jobId.toString());
 
         } catch (RuntimeException e) {
             // Unreadable. No amount of redelivery will make it readable,

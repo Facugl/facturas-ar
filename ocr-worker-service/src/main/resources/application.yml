@@ -95,5 +95,19 @@ management:
       show-details: always
 
 logging:
+  # El contexto (MDC) entra en el JSON. Es lo que hace que los logs
+  # estructurados sirvan para algo mas que verse prolijos: con `eventId`
+  # y `jobId` en cada linea, un pedido se sigue DESDE la fila del outbox
+  # HASTA la extraccion, cruzando los dos servicios, sin un sistema de
+  # tracing. El id es el mismo en los tres lugares (ADR 011).
+  structured:
+    json:
+      context:
+        include: true
+
+  # El FORMATO no se fija aca a proposito. docker-compose.yml pone
+  # LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs en los contenedores; corriendo
+  # el jar a mano los logs quedan legibles para una persona, que es quien
+  # los lee en ese caso.
   level:
     ar.facturas: DEBUG

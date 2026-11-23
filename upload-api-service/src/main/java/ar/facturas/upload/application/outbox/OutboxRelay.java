@@ -5,6 +5,7 @@ import ar.facturas.events.EventEnvelope;
 import ar.facturas.infrastructure.persistence.OutboxEventRepository;
 import ar.facturas.upload.application.metrics.PipelineMetrics;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -93,15 +94,33 @@ public class OutboxRelay {
         Integer published = tx.execute(status -> {
             List<OutboxEvent> pending = events.claimPending(BATCH_SIZE);
             for (OutboxEvent event : pending) {
-                publisher.publish(envelopeOf(event));
+                // The event id and the job go into the logging context
+                // around the publish. That id is the same one the
+                // consumer logs on the other side, which is what ties a
+                // line in this service's log to a line in the worker's —
+                // with no tracing system, and without either service
+                // knowing the other exists.
+                //
+                // Set here and not inside the publisher because the
+                // envelope does not carry the aggregate: the row does,
+                // and the relay is what holds the row.
+                MDC.put("eventId", event.getId().toString());
+                MDC.put("jobId", event.getAggregateId().toString());
+                try {
+                    publisher.publish(envelopeOf(event));
                 // Managed entity inside the transaction: the UPDATE goes
                 // out on commit, together with everything else here.
-                event.markPublished();
-                // Recorded after the publish and before the commit. If
-                // the transaction then rolls back the event is published
-                // again and timed again, which is the honest reading:
-                // the metric counts deliveries, not rows.
-                metrics.published(event);
+                    event.markPublished();
+                    // Recorded after the publish and before the commit.
+                    // If the transaction then rolls back the event is
+                    // published again and timed again, which is the
+                    // honest reading: the metric counts deliveries, not
+                    // rows.
+                    metrics.published(event);
+                } finally {
+                    MDC.remove("eventId");
+                    MDC.remove("jobId");
+                }
             }
             return pending.size();
         });
