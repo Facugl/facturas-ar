@@ -1,6 +1,6 @@
 package ar.facturas.upload.application.usecase;
 
-import ar.facturas.upload.adapters.out.persistence.ExtractedInvoiceDataRepository;
+import ar.facturas.infrastructure.persistence.ExtractedInvoiceDataRepository;
 import ar.facturas.upload.application.export.ComprobanteCsvWriter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;

@@ -5,7 +5,7 @@ import ar.facturas.domain.model.Document;
 import ar.facturas.domain.model.Job;
 import ar.facturas.domain.model.User;
 import ar.facturas.events.JobExtractionRequested;
-import ar.facturas.upload.adapters.out.persistence.JobRepository;
+import ar.facturas.infrastructure.persistence.JobRepository;
 import ar.facturas.upload.application.metrics.PipelineMetrics;
 import ar.facturas.upload.application.outbox.Outbox;
 import org.junit.jupiter.api.BeforeEach;

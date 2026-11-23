@@ -1,7 +1,7 @@
 package ar.facturas.upload.application.recovery;
 
 import ar.facturas.domain.model.Job;
-import ar.facturas.upload.adapters.out.persistence.JobRepository;
+import ar.facturas.infrastructure.persistence.JobRepository;
 import ar.facturas.upload.application.usecase.RequeueJob;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;

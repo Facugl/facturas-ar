@@ -1,4 +1,4 @@
-package ar.facturas.upload.config;
+package ar.facturas.infrastructure.storage;
 
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;

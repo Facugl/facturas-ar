@@ -3,7 +3,7 @@ package ar.facturas.upload.application.outbox;
 import ar.facturas.domain.model.OutboxEvent;
 import ar.facturas.events.EventEnvelope;
 import ar.facturas.events.JobExtractionRequested;
-import ar.facturas.upload.adapters.out.persistence.OutboxEventRepository;
+import ar.facturas.infrastructure.persistence.OutboxEventRepository;
 import ar.facturas.upload.application.metrics.PipelineMetrics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;

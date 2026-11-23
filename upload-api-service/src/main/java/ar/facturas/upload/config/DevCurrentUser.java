@@ -1,7 +1,7 @@
 package ar.facturas.upload.config;
 
 import ar.facturas.domain.model.User;
-import ar.facturas.upload.adapters.out.persistence.UserRepository;
+import ar.facturas.infrastructure.persistence.UserRepository;
 import ar.facturas.upload.application.port.CurrentUser;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;

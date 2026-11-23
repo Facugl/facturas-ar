@@ -1,4 +1,4 @@
-package ar.facturas.upload.adapters.out.persistence;
+package ar.facturas.infrastructure.persistence;
 
 import ar.facturas.domain.enums.JobStatus;
 import ar.facturas.domain.model.Job;

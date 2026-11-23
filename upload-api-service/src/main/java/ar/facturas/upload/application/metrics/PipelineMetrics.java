@@ -2,7 +2,7 @@ package ar.facturas.upload.application.metrics;
 
 import ar.facturas.domain.model.OutboxEvent;
 import ar.facturas.extraction.ExtractionResult;
-import ar.facturas.upload.adapters.out.persistence.OutboxEventRepository;
+import ar.facturas.infrastructure.persistence.OutboxEventRepository;
 import ar.facturas.upload.application.usecase.RequeueJob;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;

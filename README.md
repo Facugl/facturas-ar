@@ -1256,7 +1256,7 @@ facturas-ar/
 ├── docs/
 │   ├── architecture.md
 │   ├── diagrams/                 # JSON de Archify + HTML/PNG generados
-│   ├── adr/                        # 12 decisiones, con sus alternativas
+│   ├── adr/                        # 13 decisiones, con sus alternativas
 │   └── api/
 ├── pom.xml                         # parent, packaging=pom
 │

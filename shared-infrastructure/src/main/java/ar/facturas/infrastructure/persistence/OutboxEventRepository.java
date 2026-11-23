@@ -1,4 +1,4 @@
-package ar.facturas.upload.adapters.out.persistence;
+package ar.facturas.infrastructure.persistence;
 
 import ar.facturas.domain.model.OutboxEvent;
 import org.springframework.data.jpa.repository.JpaRepository;

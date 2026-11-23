@@ -2,8 +2,8 @@ package ar.facturas.upload.adapters.in.rest;
 
 import ar.facturas.domain.enums.JobStatus;
 import ar.facturas.domain.model.Job;
-import ar.facturas.upload.adapters.out.persistence.ExtractedInvoiceDataRepository;
-import ar.facturas.upload.adapters.out.persistence.JobRepository;
+import ar.facturas.infrastructure.persistence.ExtractedInvoiceDataRepository;
+import ar.facturas.infrastructure.persistence.JobRepository;
 import ar.facturas.upload.application.port.CurrentUser;
 import ar.facturas.upload.application.usecase.JobNotConfirmableException;
 import lombok.RequiredArgsConstructor;

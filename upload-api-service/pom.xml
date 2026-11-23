@@ -19,6 +19,12 @@
       <groupId>ar.facturas</groupId>
       <artifactId>shared-domain</artifactId>
     </dependency>
+    <!-- Repositorios y adapter de S3: los dos servicios pegan contra la
+         misma base y el mismo bucket. Ver ADR 013. -->
+    <dependency>
+      <groupId>ar.facturas</groupId>
+      <artifactId>shared-infrastructure</artifactId>
+    </dependency>
     <!-- Contratos de los mensajes. Hoy solo los escribe el outbox;
          en la Fase 2 este mismo modulo lo lee el worker, y por eso el
          contrato no vive adentro de ninguno de los dos. -->
@@ -85,12 +91,6 @@
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-database-postgresql</artifactId>
       <scope>runtime</scope>
-    </dependency>
-
-    <!-- MinIO vía el SDK de S3: el día que esto vaya a S3 real, no cambia el código -->
-    <dependency>
-      <groupId>software.amazon.awssdk</groupId>
-      <artifactId>s3</artifactId>
     </dependency>
 
     <!-- Escritura del CSV del export -->

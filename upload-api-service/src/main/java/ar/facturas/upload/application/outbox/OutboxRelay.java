@@ -2,7 +2,7 @@ package ar.facturas.upload.application.outbox;
 
 import ar.facturas.domain.model.OutboxEvent;
 import ar.facturas.events.EventEnvelope;
-import ar.facturas.upload.adapters.out.persistence.OutboxEventRepository;
+import ar.facturas.infrastructure.persistence.OutboxEventRepository;
 import ar.facturas.upload.application.metrics.PipelineMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;

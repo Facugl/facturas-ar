@@ -2,7 +2,8 @@ package ar.facturas.upload;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.persistence.autoconfigure.EntityScan;
+import ar.facturas.infrastructure.SharedInfrastructure;
+import org.springframework.context.annotation.Import;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
@@ -14,11 +15,11 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * module changes — only who calls it.
  */
 @SpringBootApplication
-// Entities live in shared-domain, outside this application's package, so
-// component scanning would never reach them. Without this the context
-// starts and then fails on the first repository with "Not a managed type".
-// (Spring Boot 4 moved this annotation out of ...autoconfigure.domain.)
-@EntityScan(basePackages = "ar.facturas.domain.model")
+// Entities, repositories and the object-storage adapter all live outside
+// this application's package, because the worker uses the same ones
+// against the same database and the same bucket. One import brings the
+// whole lot, and replaces the @EntityScan this class used to carry.
+@Import(SharedInfrastructure.class)
 // For the outbox relay's periodic sweep, and nothing else yet. Without
 // it the @Scheduled method is simply never called: Spring Boot does not
 // enable scheduling on its own, and it fails by doing nothing, which is

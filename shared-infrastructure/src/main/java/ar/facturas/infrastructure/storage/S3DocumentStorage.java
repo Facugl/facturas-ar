@@ -1,7 +1,7 @@
-package ar.facturas.upload.adapters.out.storage;
+package ar.facturas.infrastructure.storage;
 
 import ar.facturas.domain.port.DocumentStorage;
-import ar.facturas.upload.config.StorageProperties;
+import ar.facturas.infrastructure.storage.StorageProperties;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

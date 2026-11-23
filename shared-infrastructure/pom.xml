@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>ar.facturas</groupId>
+    <artifactId>facturas-ar</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>shared-infrastructure</artifactId>
+  <name>shared-infrastructure</name>
+  <description>Acceso a los recursos compartidos: la base y el almacenamiento de objetos.</description>
+
+  <!--
+    Existe por el mismo motivo que shared-domain, y el ADR 006 ya lo
+    habia dicho a medias: "las entidades viven en un modulo comun porque
+    los dos servicios las usan contra la misma base". Los repositorios
+    tambien, y el adapter de S3 tambien — la API guarda el archivo y el
+    worker lo lee.
+
+    Una base, un mapeo de esa base. La alternativa era duplicar las
+    interfaces en cada servicio, y eso significaria dos copias del
+    UPDATE condicional del claim, que es el SQL mas critico del
+    proyecto. Ver ADR 013.
+
+    Aca SI entra Spring: estos son adapters, no dominio. La linea que
+    shared-domain defiende —cero framework— no se mueve; este modulo
+    existe justamente para que no haga falta moverla.
+  -->
+  <dependencies>
+    <dependency>
+      <groupId>ar.facturas</groupId>
+      <artifactId>shared-domain</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+
+    <!-- El almacenamiento va por el SDK de S3: el dia que esto apunte a
+         S3 real o a otro backend solo cambia el endpoint. -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+    </dependency>
+  </dependencies>
+
+</project>

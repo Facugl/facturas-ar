@@ -1,4 +1,4 @@
-package ar.facturas.upload.adapters.out.persistence;
+package ar.facturas.upload.application.export;
 
 import ar.facturas.domain.model.Document;
 import ar.facturas.domain.model.ExtractedInvoiceData;
@@ -6,6 +6,10 @@ import ar.facturas.domain.model.Job;
 import ar.facturas.domain.model.User;
 import ar.facturas.domain.port.DocumentStorage;
 import ar.facturas.domain.vo.Cuit;
+import ar.facturas.infrastructure.persistence.DocumentRepository;
+import ar.facturas.infrastructure.persistence.ExtractedInvoiceDataRepository;
+import ar.facturas.infrastructure.persistence.JobRepository;
+import ar.facturas.infrastructure.persistence.UserRepository;
 import ar.facturas.upload.ContainersTest;
 import ar.facturas.upload.application.port.CurrentUser;
 import org.junit.jupiter.api.DisplayName;

@@ -23,6 +23,7 @@
     <module>shared-domain</module>
     <module>extraction</module>
     <module>shared-events</module>
+    <module>shared-infrastructure</module>
     <module>upload-api-service</module>
     <!-- ocr-worker-service entra cuando exista la cola. Un módulo vacío
          durante seis semanas es ruido, no preparación.
@@ -86,6 +87,11 @@
       <dependency>
         <groupId>ar.facturas</groupId>
         <artifactId>shared-events</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>ar.facturas</groupId>
+        <artifactId>shared-infrastructure</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

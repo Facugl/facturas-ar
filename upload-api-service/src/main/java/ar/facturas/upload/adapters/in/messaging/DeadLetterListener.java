@@ -1,6 +1,6 @@
 package ar.facturas.upload.adapters.in.messaging;
 
-import ar.facturas.upload.adapters.out.persistence.OutboxEventRepository;
+import ar.facturas.infrastructure.persistence.OutboxEventRepository;
 import ar.facturas.upload.application.metrics.PipelineMetrics;
 import ar.facturas.upload.application.usecase.RequeueJob;
 import ar.facturas.upload.config.RabbitTopology;

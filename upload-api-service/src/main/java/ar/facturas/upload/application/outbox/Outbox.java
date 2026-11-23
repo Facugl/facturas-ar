@@ -2,7 +2,7 @@ package ar.facturas.upload.application.outbox;
 
 import ar.facturas.domain.model.OutboxEvent;
 import ar.facturas.events.DomainEvent;
-import ar.facturas.upload.adapters.out.persistence.OutboxEventRepository;
+import ar.facturas.infrastructure.persistence.OutboxEventRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
