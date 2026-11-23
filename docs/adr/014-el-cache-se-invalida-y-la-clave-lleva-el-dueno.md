@@ -99,6 +99,25 @@ el módulo no sabe qué es un `JobResponse`, así que el DTO de la API no
 entra en un módulo del que el worker también depende. El worker solo
 llama a `evict`.
 
+## Medido contra el stack real
+
+Con los siete contenedores arriba, forzando el orden en vez de esperarlo:
+
+| | |
+|---|---|
+| Worker **detenido**, subo un comprobante | el job se queda en `PENDING` |
+| Leo `GET /jobs/{id}` | Redis pasa de 0 a 1 clave: `job:00000000-…-0001:c8fbc791-…` |
+| La clave | lleva el `userId` **y** el `jobId`, TTL 30 s, valor = el `JobResponse` serializado |
+| Vuelvo a leer con el worker muerto | sigue diciendo `PENDING` — sale del cache |
+| **Levanto el worker** | extrae y **borra la entrada desde el otro proceso**: Redis vuelve a 0 |
+| Leo de nuevo | `EXTRACTED`. El endpoint dejó de decir "procesando" sin que nadie se lo diga |
+
+La primera vez que lo probé sin detener el worker, la clave no aparecía y
+parecía que el cacheo no funcionaba. Funcionaba: el worker terminaba el
+job e invalidaba la entrada **entre mi lectura y mi chequeo**. Detener el
+worker no fue para que el test pasara, fue para poder ver los dos pasos
+por separado.
+
 ## Alternativas descartadas
 
 **Write-through: el worker escribe el valor nuevo.** Evita el miss

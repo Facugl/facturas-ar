@@ -27,7 +27,7 @@ vuelve solo; y todo eso se mide en Prometheus.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus**, stack dockerizado, 332 tests (55 contra Postgres, RabbitMQ y Redis reales), CI |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus**, stack dockerizado, 332 tests (53 contra Postgres, RabbitMQ y Redis reales), CI |
 | ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y los dashboards de Grafana |
 
 **La API hoy:** `POST /documents` · `GET /jobs/:id` ·
@@ -742,6 +742,14 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 - **Entró último a propósito.** Cachear un read no tiene nada interesante; lo interesante es que la API sirve la respuesta cacheada y **el worker es el que la hace incorrecta**, porque el worker es el que termina el job. Con los dos en un proceso la invalidación sería un `Map.remove` y no demostraría nada
 - **La clave lleva el dueño** (`job:{userId}:{jobId}`), y eso no es prolijidad: `GET /jobs/{id}` responde 404 para un job ajeno, y esa verificación corre contra la fila de la base — que un hit del cache se saltea. Con la clave sin el usuario, el polling de uno llenaría una entrada que se le serviría a otro, y una optimización de performance se habría vuelto un bypass de autorización
 - **Degrada, no falla.** Un miss y un error son lo mismo para el endpoint, así que la API sigue respondiendo desde Postgres mientras Redis reinicia. El costo es una invalidación que falla y deja una respuesta vieja: el TTL es la garantía de último recurso, igual que el barrido detrás del camino rápido del relay y el reaper detrás de la cola
+
+> **Medido contra el stack real**, deteniendo el worker para poder ver
+> los dos pasos por separado: con el worker caído, un `GET` deja una
+> clave `job:{userId}:{jobId}` en Redis con TTL 30 s, y una segunda
+> lectura sigue diciendo `PENDING` porque sale del cache. Al levantar el
+> worker, **borra esa entrada desde el otro proceso** y el endpoint
+> empieza a decir `EXTRACTED` sin que nadie se lo pida. Ver
+> [ADR 014](docs/adr/014-el-cache-se-invalida-y-la-clave-lleva-el-dueno.md).
 
 ### Testing
 - JUnit 5 + AssertJ
