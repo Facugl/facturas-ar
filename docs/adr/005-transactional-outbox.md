@@ -143,11 +143,12 @@ cola —lee tipo y versión antes de confiar en el body, no hace nada que no
 pueda hacer dos veces— pero todavía corre adentro del
 `upload-api-service`. Mudarlo a `ocr-worker-service` es la semana 3.
 
-**El consumidor de la DLQ.** La cola está declarada y recibe lo
-inprocesable, pero nadie la lee. El bucle que incrementa `retry_count` y
-manda el job de vuelta a `PENDING` es la semana 3. Declararla igual no es
-preparación vacía: sin dead-letter exchange, un mensaje rechazado se
-**descarta**, y con ella queda estacionado donde se puede mirar.
+**Nada: el consumidor de la DLQ y el reaper entraron el 2026-11-23.** Y
+los dos reintentan **escribiendo en el outbox**, nunca publicando: un
+reintento que publicara al broker fuera de la transacción que devuelve el
+job a `PENDING` sería este mismo dual-write, en el peor lugar posible —
+el camino que corre cuando algo ya falló. Ver
+[012](012-una-extraccion-fallida-se-ackea.md).
 
 **El veneno en el relay.** Un evento que el broker rechace siempre hace
 fallar su lote para siempre y bloquea todo lo que está detrás, porque el

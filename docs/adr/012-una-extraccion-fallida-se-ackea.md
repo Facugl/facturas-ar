@@ -74,11 +74,26 @@ tipo desconocido se nackeara, agregar `job.extraction.completed` llenaría
 la DLQ de mensajes perfectamente válidos hasta que todos los
 consumidores se actualicen.
 
-**La DLQ todavía no tiene consumidor.** El bucle que incrementa
-`retry_count` y manda el job de vuelta a `PENDING` es la semana 3. Hasta
-entonces los mensajes se acumulan ahí a la vista, que es justamente por
-qué vale declararla ya: sin dead-letter exchange, un mensaje rechazado se
-**descarta** sin dejar rastro de que llegó.
+**La DLQ ya tiene consumidor** (`DeadLetterListener`, 2026-11-23). Y la
+decisión de esta página le dio su forma: como una extracción fallida se
+ackea, lo único que llega ahí son mensajes inprocesables, y un mensaje
+inprocesable casi siempre lo es porque su **body** no se pudo leer. Así
+que el consumidor no puede sacar el `jobId` del payload — lo saca del
+`message-id`, que es una propiedad de AMQP y sobrevive:
+
+```
+message-id ──► outbox_event.id ──► aggregate_id ──► el job
+```
+
+Funciona solo porque el [011](011-el-envelope-viaja-en-las-propiedades-de-amqp.md)
+puso el id del evento en el campo estándar en vez de adentro del
+payload. No se diseñó para esto.
+
+**Y los `FAILED` los levanta el reaper, no una cola.** Es el corolario
+directo: si una extracción fallida se ackea, la fila del job es el único
+registro de que un intento falló, así que el que la tiene que leer es
+algo que mira la base. `RecoverJobs` lo hace cada minuto. Eso corrigió
+el diseño de reintentos del README, que los mandaba por la DLQ.
 
 ## Alternativas descartadas
 

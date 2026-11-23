@@ -16,17 +16,19 @@
 
 ## Estado actual
 
-**Fase 1, semanas 1-3, el export de la 5, y las semanas 1-2 de la Fase
-2.** El sistema ingesta un comprobante, le extrae los datos, y devuelve
-el período en un CSV que abre en Excel sin tocar nada. **La extracción ya
-no pasa en el request**: entre la subida y el procesamiento hay una fila
-durable en `outbox_event` y un RabbitMQ, así que el `POST` responde en
-medio segundo y el trabajo corre del otro lado de la cola.
+**Fase 1, semanas 1-3, el export de la 5, y las semanas 1-2 de la Fase 2
+más la recuperación de fallas de la 3.** El sistema ingesta un
+comprobante, le extrae los datos, y devuelve el período en un CSV que
+abre en Excel sin tocar nada. **La extracción ya no pasa en el request**:
+entre la subida y el procesamiento hay una fila durable en
+`outbox_event` y un RabbitMQ, así que el `POST` responde en medio segundo
+y el trabajo corre del otro lado de la cola. Y si el worker se cae a
+mitad de un job, el job vuelve solo.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual y dead-letter queue**, stack dockerizado, 301 tests (31 contra Postgres y RabbitMQ reales), CI |
-| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y el resto de la Fase 2 (worker separado, consumidor de la DLQ con reintentos, Redis) |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, stack dockerizado, 318 tests (39 contra Postgres y RabbitMQ reales), CI |
+| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y el resto de la Fase 2 (worker como servicio aparte, Redis) |
 
 **La API hoy:** `POST /documents` · `GET /jobs/:id` ·
 `PUT /jobs/:id/confirm` · `GET /export/csv?from=&to=`
@@ -50,7 +52,7 @@ marca qué está hecho.
 > consumidor está escrito como consumidor de cola —lee el tipo y la
 > versión antes de confiar en el body, no hace nada que no pueda hacer
 > dos veces— pero corre adentro del `upload-api-service`. Mudarlo a
-> `ocr-worker-service` es la semana 3. Ver
+> `ocr-worker-service` es lo que queda de la semana 3. Ver
 > [sección 8](#8-contratos-de-eventos).
 
 > **Probado con el broker caído.** Un `POST` con RabbitMQ detenido
@@ -233,7 +235,7 @@ El orden técnico del roadmap (sync → cola/Redis → observabilidad → pulido
 5. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción. Un archivo ilegible o que no es una factura **no es un fallo del sistema**: el formulario sale vacío y el documento queda guardado igual.
 6. Export CSV de un rango de fechas que abre en Excel y Sheets con montos como números y acentos correctos, **sin intervención manual**. *(✅ **Cumplido en los dos**, verificado abriendo el archivo. La vuelta por Excel encontró algo que ningún test podía: el CAE salía como `7,04171E+13`.)*
 7. Un usuario no puede acceder a datos de otro — con test automatizado que lo demuestre.
-8. El sistema sobrevive a que el worker se caiga a mitad de un procesamiento: el mensaje se reprocesa y el resultado no se duplica. *(Fase 2 — es el criterio que justifica toda la mensajería.)*
+8. El sistema sobrevive a que el worker se caiga a mitad de un procesamiento: el mensaje se reprocesa y el resultado no se duplica. *(✅ **Cumplido.** "No se duplica" lo da el claim atómico desde la Fase 1: una reentrega encuentra el job no tomable y no hace nada. "Se reprocesa" faltaba hasta el reaper — un worker que moría entre el claim y el ack dejaba el job en `PROCESSING`, que no es un estado procesable, así que nadie lo levantaba nunca. Ver [sección 8](#el-reaper-los-jobs-que-ninguna-cola-va-a-mover).)*
 9. Siempre hay feedback visible de estado ("procesando"), aunque la Fase 1 sea síncrona.
 
 > **El criterio (2) decía "≥ 85% de las fotos" y se cayó al medirlo.**
@@ -750,7 +752,16 @@ los eventos en vez de duplicarlos lo decide el lock, y hacen falta dos
 conexiones sosteniéndolo a la vez para verlo; y que un evento abandonado
 se publique **después** solo es cierto si la fila sobrevivió a un commit.
 
-`RabbitMessagingTest` es el tercero, y corre contra un RabbitMQ real por
+`RecoveryPostgresTest` es el que cierra el **criterio de aceptación 8**,
+y tiene que estar acá porque las dos mitades son propiedades de la
+infraestructura: *"no se duplica"* es el `UPDATE` condicional que corre
+la base, y *"se reprocesa"* es una fila que el reaper encuentra y un
+mensaje que el broker después entrega. Los cutoffs del reaper se le pasan
+por parámetro en vez de leerlos de la config, así los tests piden "todo,
+sin importar la antigüedad" en lugar de envejecer filas o esperar un
+reloj.
+
+`RabbitMessagingTest` es el cuarto, y corre contra un RabbitMQ real por
 el mismo motivo: un `RabbitTemplate` mockeado le da la razón a lo que el
 test espera. Lo que está en duda es qué cruza el cable (el body se
 compara a nivel de `byte[]` contra lo que guardó el outbox), dónde
@@ -1007,10 +1018,10 @@ framework.
 
 > **[ADR 005 — Transactional outbox](docs/adr/005-transactional-outbox.md).** Junto con el del QR, lo más sustancioso que el proyecto tiene para contar.
 >
-> **Lo que falta:** mudar el consumidor a `ocr-worker-service`, y leer la
-> DLQ. Y del lado del relay, un evento que el broker rechace siempre hace
-> fallar su lote para siempre, porque el lote es una transacción: eso se
-> arregla con reintentos por evento, semana 3.
+> **Lo que falta:** mudar el consumidor a `ocr-worker-service`. Y del
+> lado del relay, un evento que el broker rechace siempre hace fallar su
+> lote para siempre, porque el lote es una transacción: eso se arregla
+> con reintentos por evento.
 
 ### Respuesta del worker: sin evento de vuelta (Opción A — DB compartida)
 
@@ -1054,39 +1065,105 @@ siempre.
 
 > **[ADR 012 — Una extracción fallida se ackea](docs/adr/012-una-extraccion-fallida-se-ackea.md).**
 
-### Reintentos (semana 3, pendiente)
+### El reaper: los jobs que ninguna cola va a mover
 
-La cola está declarada y recibe lo inprocesable. **Nadie la lee
-todavía**: los mensajes se acumulan ahí a la vista, que es justamente por
-qué vale declararla ya — sin dead-letter exchange, un mensaje rechazado
-se **descarta** sin dejar rastro de que llegó.
+**Lee la base, no una cola, y eso es lo que lo hace la garantía.** Una
+cola solo puede contarte de un mensaje que todavía tiene; la tabla `jobs`
+sabe de todo job que necesita trabajo sin importar qué pasó con ningún
+mensaje. Es la misma forma que el outbox: el camino rápido es el mensaje,
+la promesa es la fila durable.
+
+Dos casos, y **ninguno de los dos puede venir de una cola**:
+
+| Caso | Por qué la cola no sirve |
+|---|---|
+| Colgado en `PROCESSING` | El worker lo tomó y murió. No quedó mensaje: nunca se ackeó, así que el broker ya lo reentregó (y el claim lo rechazó) o lo perdió con la conexión. Solo la fila sabe |
+| En reposo en `FAILED` | Por el [ADR 012](docs/adr/012-una-extraccion-fallida-se-ackea.md) una extracción fallida **se ackea**, así que no genera mensaje en la DLQ. La fila es el único registro de que un intento falló |
+
+> **Esto corrige lo que decía esta sección.** El diseño original mandaba
+> los `FAILED` por la DLQ, y eso dejó de ser cierto en el momento en que
+> una extracción fallida empezó a ackearse. Dos caminos distintos para
+> dos fallas distintas.
 
 ```
-listener en DLQ incrementa Job.retry_count
-  → si retry_count < max_retries:
-        Job.status = FAILED → PENDING   ← vuelve a la única puerta de entrada
-        republica el evento (scheduled task simple, sin plugin de delay en v1)
-  → si retry_count >= max_retries:
-        Job.status = DEAD_LETTER, queda como registro histórico
+@Scheduled cada 1 min:
+  jobs en PROCESSING con started_at < now - 10 min   ← el worker murió
+  jobs en FAILED      con started_at < now - 5 min   ← el intento falló
+    → ¿quedan intentos?
+        sí  → requeue(): FAILED/PROCESSING → PENDING, retry_count++
+              y el evento nuevo va al OUTBOX, no al broker
+        no  → DEAD_LETTER, y queda como registro histórico
 ```
 
-**Lo importante:** el reintento **no republica un job en `FAILED`**. Primero lo devuelve a `PENDING` y recién ahí publica. Si no, una copia vieja del mensaje original (el outbox puede publicar dos veces, ver arriba) sería indistinguible del reintento deliberado, y las dos se procesarían.
+**El reintento escribe en el outbox, nunca publica.** No es simetría
+decorativa: un reintento que publicara al broker fuera de la transacción
+que devuelve el job a `PENDING` sería exactamente el dual-write que el
+ADR 005 existe para eliminar — y en el peor lugar posible, el camino que
+corre cuando algo ya falló. Un broker caído dejaría un job en `PENDING`
+que el propio reintento huerfanizó.
 
-### Jobs colgados: el reaper
+**`PENDING` es la única puerta de entrada**, así que todo camino vuelve
+ahí antes de republicar. Publicar un job todavía en `FAILED` sería peor
+que inútil: el worker se niega a tomarlo, y el mensaje es
+indistinguible de una reentrega del original.
 
-Si un worker muere entre el claim y el `ack`, el job queda en `PROCESSING` para siempre — nadie lo va a tomar, porque `PROCESSING` no es un estado procesable.
+**El retardo de 5 minutos para los `FAILED` es un backoff crudo**, y
+hace falta: sin él el reaper se quemaría los tres intentos en tres de sus
+propias corridas. Un PDF corrupto falla igual las tres veces, y una caída
+transitoria necesita más de tres minutos para pasar. Un backoff de verdad
+necesita el plugin de *delayed message* de RabbitMQ, fuera de alcance
+para la v1.
 
-```java
-@Scheduled(fixedDelay = 60_000)
-void recuperarJobsColgados() {
-    // UPDATE job SET status='PENDING', retry_count = retry_count + 1
-    //  WHERE status='PROCESSING' AND started_at < now() - interval '10 minutes'
-    //    AND retry_count < max_retries
-    // ...y republicar los afectados
-}
+**Medido contra el stack real**, induciendo por SQL el estado que deja un
+worker que muere entre el claim y el `ack`:
+
+| | |
+|---|---|
+| Job en `PROCESSING`, con su evento borrado | el reaper lo devolvió a `PENDING` **14 s** después, escribió el evento nuevo, el relay lo publicó y el consumidor lo extrajo |
+| El mismo job con `max_retries = 0` | terminó en `DEAD_LETTER` con el motivo escrito, pasando por `FAILED` en la misma transacción |
+| Reentrega del mismo mensaje sobre un job ya extraído | `claim` devolvió 0 filas, el job no se movió, y el mensaje se ackeó en vez de ir a la DLQ — un duplicado no es una falla |
+
+### El consumidor de la DLQ, y el truco del `message-id`
+
+Lo que llega a la dead-letter queue es casi siempre un mensaje cuyo
+**body** el consumidor no pudo leer — así que lo obvio, parsearlo y
+sacar el `jobId`, es justo lo que no funciona.
+
+El `message-id` sobrevive, porque es una propiedad de AMQP y no parte del
+body. Y es el `eventId`, que es la clave primaria de `outbox_event`, cuyo
+`aggregate_id` es el job:
+
+```
+message-id ──► outbox_event.id ──► aggregate_id ──► el job
 ```
 
-El timeout tiene que ser holgado respecto del peor caso real de OCR (un PDF escaneado de varias páginas), si no el reaper se roba jobs que todavía están corriendo. Medilo con `invoice.job.processing.time` antes de fijar el número.
+Eso funciona **solo porque** el id del evento se asigna una vez, al
+escribir la fila, y el publisher lo pone en el campo estándar en vez de
+adentro del payload ([ADR 011](docs/adr/011-el-envelope-viaja-en-las-propiedades-de-amqp.md)).
+No se diseñó para esto, que es la parte linda.
+
+Y el evento que escribe es **nuevo**, armado desde el job, no una copia
+del mensaje que falló: si el body era ilegible, repetir esos bytes
+fallaría igual.
+
+> **Un job que sigue en `PENDING` no gasta un intento.** Si el mensaje se
+> rechazó antes de que el consumidor pudiera tomar nada, lo que faltó fue
+> el mensaje y no el intento. Cobrarle un reintento gastaría los intentos
+> del job en un mal día del broker.
+
+**Medido contra el broker real:** se publicó un mensaje con body ilegible
+y el `message-id` de un evento existente. El consumidor de trabajo lo
+rechazó, el DLX lo ruteó, el consumidor de la DLQ lo rastreó hasta el
+job, escribió un evento nuevo **sin gastar un intento** (`retry_count`
+quedó en 0), y el job terminó `EXTRACTED`. Las dos colas quedaron en
+cero.
+
+> El timeout de `PROCESSING` tiene que ser **holgado** respecto del peor
+> caso real de OCR (un PDF escaneado de varias páginas), si no el reaper
+> se roba jobs que todavía están corriendo — y ahí deja de ser un
+> mecanismo de recuperación y se vuelve un duplicador. El número sale de
+> medir `invoice.job.processing.time` (Fase 3); hasta entonces, 10
+> minutos a propósito.
 
 ### Idempotencia del worker: claim atómico
 
@@ -1288,7 +1365,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 |---|---|---|
 | 1 | ~~Aprender RabbitMQ~~ → **contrato de evento + transactional outbox y su relay** | ✅ |
 | 2 | **RabbitMQ en el medio** (exchange, queue, routing key, ack manual, DLX): el relay publica al broker y un `@RabbitListener` consume, todavía en el mismo servicio | ✅ |
-| 3 | Separar `ocr-worker-service` · consumidor de la DLQ con reintentos, invalidación de cache Redis | ⬜ |
+| 3 | ~~Consumidor de la DLQ con reintentos~~ + **reaper de jobs colgados** · Separar `ocr-worker-service`, invalidación de cache Redis | 🔶 |
 | 4 (buffer) | Testing de casos de falla con Testcontainers: matar el worker a mitad de un job, tirar abajo el broker con eventos pendientes en el outbox | ⬜ |
 
 > **Las semanas 1 y 2 se dieron vuelta, y vale decir por qué.** El plan
