@@ -23,6 +23,7 @@ pierde rápido, y es lo único que sirve cuando hay que revisarla.
 | [011](011-el-envelope-viaja-en-las-propiedades-de-amqp.md) | El envelope viaja en las propiedades de AMQP, no dentro del body | Aceptada · implementada |
 | [012](012-una-extraccion-fallida-se-ackea.md) | **Una extracción fallida se ackea; la DLQ es para lo que no se puede procesar** | Aceptada · implementada |
 | [013](013-los-repositorios-son-compartidos.md) | La base, el bucket y la topología del broker son compartidos, no duplicados | Aceptada · implementada |
+| [014](014-el-cache-se-invalida-y-la-clave-lleva-el-dueno.md) | **El cache se invalida, no se actualiza; y la clave lleva el dueño** | Aceptada · implementada |
 
 Hay una cadena de correcciones acá, y vale leerla en orden. El
 [009](009-deteccion-del-qr-en-el-cliente.md) revisa al

@@ -38,6 +38,11 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
  * they cannot drift. It also means neither service has to wait for the
  * other to have run first.
  *
+ * <p>The job cache is in here for the sharpest version of the same
+ * reason: its two sides are in different processes. The API reads it and
+ * the worker invalidates it, because the worker is what finishes a job
+ * and therefore what makes an entry wrong.
+ *
  * <p>What this class deliberately does <em>not</em> configure is Flyway.
  * The schema has one owner, and that is the API: a migration is an
  * ordered sequence of changes, and two services running one at the same
@@ -52,7 +57,8 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 @EntityScan(basePackages = "ar.facturas.domain.model")
 @EnableJpaRepositories(basePackages = "ar.facturas.infrastructure.persistence")
 @ComponentScan(basePackages = {"ar.facturas.infrastructure.storage",
-                              "ar.facturas.infrastructure.messaging"})
+                              "ar.facturas.infrastructure.messaging",
+                              "ar.facturas.infrastructure.cache"})
 @ConfigurationPropertiesScan(basePackages = "ar.facturas.infrastructure.storage")
 public class SharedInfrastructure {
 }

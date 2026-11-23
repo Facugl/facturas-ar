@@ -1,6 +1,6 @@
 # Infraestructura local.
 #
-# Redis y Grafana entran en las Fases 2 y 3. Mantener acá solo lo que el
+# Grafana entra con los dashboards, en la Fase 3. Mantener acá solo lo que el
 # código usa hoy: si levantás servicios que nadie consume, dejás de
 # saber qué necesita realmente el sistema.
 
@@ -94,6 +94,8 @@ services:
         condition: service_started
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       # Adentro de la red de compose los servicios se alcanzan por su
       # nombre y por su puerto INTERNO. Acá va postgres:5432, no
@@ -106,8 +108,30 @@ services:
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_USERNAME: facturas
       SPRING_RABBITMQ_PASSWORD: facturas
+      SPRING_DATA_REDIS_HOST: redis
     ports:
       - "8080:8080"
+
+  # Cache-aside de GET /jobs/{id}, que es el read que el frontend
+  # machaca: el mismo job cada uno o dos segundos mientras se procesa.
+  #
+  # Lo interesante no es el cache, es la invalidacion: la API lee y el
+  # WORKER invalida, porque el worker es el que termina el job. En un
+  # solo proceso seria un Map.remove.
+  redis:
+    image: redis:7-alpine
+    container_name: facturas-redis
+    # Sin persistencia a proposito: un cache que sobrevive al reinicio es
+    # un cache que puede devolver algo de antes de un deploy. Que arranque
+    # vacio es lo correcto.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # La cascada de extraccion, del otro lado de la cola.
   #
@@ -137,6 +161,8 @@ services:
       # la declaran, justamente para no depender del orden.
       upload-api-service:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/facturas
       SPRING_DATASOURCE_USERNAME: facturas
@@ -145,6 +171,7 @@ services:
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_USERNAME: facturas
       SPRING_RABBITMQ_PASSWORD: facturas
+      SPRING_DATA_REDIS_HOST: redis
 
   # Scrapea /actuator/prometheus de los dos servicios.
   #

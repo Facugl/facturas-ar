@@ -666,6 +666,8 @@ Escritos. Ver [docs/adr/](adr/):
 | [010](adr/010-dos-motores-para-leer-el-qr.md) | Dos motores para leer el QR, y OpenCV para las fotos — qué pasa cuando se mide con más de una herramienta |
 | [011](adr/011-el-envelope-viaja-en-las-propiedades-de-amqp.md) | Por qué el envelope del mensaje va en las propiedades de AMQP y no dentro del body |
 | [012](adr/012-una-extraccion-fallida-se-ackea.md) | Por qué una extracción fallida se ackea, y qué significa entonces la dead-letter queue |
+| [013](adr/013-los-repositorios-son-compartidos.md) | Qué comparten los dos servicios, y por qué la topología del broker la declaran los dos pero el esquema lo migra uno |
+| [014](adr/014-el-cache-se-invalida-y-la-clave-lleva-el-dueno.md) | Por qué el cache se borra en vez de reescribirse, y por qué la clave lleva el usuario |
 
 ---
 

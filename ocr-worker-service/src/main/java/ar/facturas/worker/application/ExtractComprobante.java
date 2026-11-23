@@ -8,6 +8,7 @@ import ar.facturas.extraction.DocumentContent;
 import ar.facturas.extraction.ExtractionOrchestrator;
 import ar.facturas.extraction.ExtractionResult;
 import ar.facturas.extraction.InvoiceField;
+import ar.facturas.infrastructure.cache.JobCache;
 import ar.facturas.infrastructure.persistence.DocumentRepository;
 import ar.facturas.infrastructure.persistence.ExtractedInvoiceDataRepository;
 import ar.facturas.infrastructure.persistence.JobRepository;
@@ -49,6 +50,7 @@ public class ExtractComprobante {
     private final DocumentStorage storage;
     private final ExtractionOrchestrator orchestrator;
     private final ExtractionMetrics metrics;
+    private final JobCache cache;
     private final TransactionTemplate tx;
 
     /**
@@ -85,6 +87,13 @@ public class ExtractComprobante {
             metrics.extracted(result);
 
             outcome = persist(jobId, result);
+
+            // After the commit, necessarily. Evicting before it would
+            // let a poll land in the window between the delete and the
+            // commit, cache the OLD row again, and leave the stale
+            // answer in place for a whole TTL instead of until the next
+            // read.
+            invalidateCache(jobId);
 
         } catch (RuntimeException e) {
             log.error("Extraction failed for job {}", jobId, e);
@@ -240,6 +249,30 @@ public class ExtractComprobante {
                 .map(v -> v.value())
                 .filter(type::isInstance)
                 .map(type::cast);
+    }
+
+    /**
+     * Drops the cached answer for this job.
+     *
+     * <p>This is the half of the cache that only makes sense across
+     * processes: the API reads the entry, and this service is what makes
+     * it wrong, because this service is what finishes the job. It
+     * invalidates rather than rewrites — see {@code JobCache} — so it
+     * never has to know the shape of the API's response.
+     *
+     * <p>Reading the owner costs a query, and the owner is part of the
+     * key for a reason that is not negotiable: without it the cache is an
+     * authorization bypass. A failure here is logged and swallowed; the
+     * extraction already succeeded, and the TTL bounds the staleness.
+     */
+    private void invalidateCache(UUID jobId) {
+        try {
+            tx.executeWithoutResult(status -> jobs.findById(jobId).ifPresent(job ->
+                    cache.evict(job.getDocument().getUser().getId(), jobId)));
+        } catch (RuntimeException e) {
+            log.warn("Could not invalidate the cache for job {}. The stale entry "
+                     + "expires on its own within the TTL.", jobId, e);
+        }
     }
 
     private void markFailed(UUID jobId, String reason) {

@@ -2,6 +2,7 @@ package ar.facturas.worker;
 
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.rabbitmq.RabbitMQContainer;
 
@@ -36,9 +37,18 @@ public abstract class ContainersTest {
 
     static final RabbitMQContainer RABBIT = new RabbitMQContainer("rabbitmq:3.13-alpine");
 
+    /**
+     * Redis, through {@code GenericContainer}: Testcontainers 2.x has no
+     * module for it, and a cache does not need one — an image and a port
+     * is the whole configuration.
+     */
+    static final GenericContainer<?> REDIS =
+            new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+
     static {
         POSTGRES.start();
         RABBIT.start();
+        REDIS.start();
     }
 
     @DynamicPropertySource
@@ -51,6 +61,9 @@ public abstract class ContainersTest {
         registry.add("spring.rabbitmq.port", RABBIT::getAmqpPort);
         registry.add("spring.rabbitmq.username", RABBIT::getAdminUsername);
         registry.add("spring.rabbitmq.password", RABBIT::getAdminPassword);
+
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
 
         // Flyway arrives through the API, which is on this service's test
         // classpath: it has to run here even though the worker itself
@@ -76,6 +89,7 @@ public abstract class ContainersTest {
         registry.add("facturas.recovery.interval", () -> "PT1H");
         registry.add("facturas.recovery.processing-timeout", () -> "PT2M");
         registry.add("facturas.recovery.failed-retry-delay", () -> "PT5M");
+        registry.add("facturas.cache.job-ttl", () -> "PT30S");
 
         // And this one is not a setting, it is a requirement: the relay
         // waits for the broker to confirm before it marks an event

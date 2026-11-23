@@ -57,6 +57,15 @@
       <artifactId>spring-boot-starter-amqp</artifactId>
     </dependency>
 
+    <!-- El cache de GET /jobs/{id}. Vive aca porque sus dos lados estan
+         en procesos distintos: la API lee y el worker invalida, porque el
+         worker es el que termina el job. En un solo proceso esto seria un
+         Map.remove y no demostraria nada. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+
     <!-- El almacenamiento va por el SDK de S3: el dia que esto apunte a
          S3 real o a otro backend solo cambia el endpoint. -->
     <dependency>

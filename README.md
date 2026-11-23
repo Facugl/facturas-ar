@@ -16,8 +16,8 @@
 
 ## Estado actual
 
-**Fase 1, semanas 1-3 y el export de la 5. Fase 2 completa menos Redis.
-Fase 3, semana 1.** El sistema ingesta un comprobante, le extrae los
+**Fase 1, semanas 1-3 y el export de la 5. Fase 2 completa. Fase 3,
+semana 1.** El sistema ingesta un comprobante, le extrae los
 datos, y devuelve el período en un CSV que abre en Excel sin tocar nada.
 **La extracción no pasa en el request y no pasa en el mismo proceso**:
 entre la subida y el procesamiento hay una fila durable en
@@ -27,8 +27,8 @@ vuelve solo; y todo eso se mide en Prometheus.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **métricas custom en Prometheus**, stack dockerizado, 326 tests (49 contra Postgres y RabbitMQ reales), CI |
-| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, Redis, y los dashboards de Grafana |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus**, stack dockerizado, 332 tests (55 contra Postgres, RabbitMQ y Redis reales), CI |
+| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y los dashboards de Grafana |
 
 **La API hoy:** `POST /documents` · `GET /jobs/:id` ·
 `PUT /jobs/:id/confirm` · `GET /export/csv?from=&to=`
@@ -71,8 +71,9 @@ tocar el código — la imagen compila adentro con el wrapper versionado.
 docker compose up -d --wait
 ```
 
-Levanta Postgres, el almacenamiento S3-compatible, RabbitMQ, la API y
-Prometheus, en ese orden, esperando a que cada uno esté sano. Después:
+Levanta Postgres, el almacenamiento S3-compatible, RabbitMQ, Redis, la
+API, el worker y Prometheus, en ese orden, esperando a que cada uno esté
+sano. Después:
 
 | Qué | Dónde |
 |---|---|
@@ -83,6 +84,7 @@ Prometheus, en ese orden, esperando a que cada uno esté sano. Después:
 | Almacenamiento S3 | http://localhost:9090 |
 | **Consola de RabbitMQ** | http://localhost:15672 — `facturas`/`facturas` |
 | **Prometheus** | http://localhost:9091 — el `9090` lo usa S3Mock |
+| Redis | `localhost:6379` |
 
 > **Postgres va en el 5433 a propósito.** El 5432 suele estar ocupado por
 > una instalación nativa, y con los dos escuchando la aplicación se
@@ -257,9 +259,9 @@ Los diagramas se generan con [Archify](https://github.com/tt-a1i/archify) a part
 
 ### Vista de componentes
 
-> Esto ya es el estado real, con dos excepciones: **Redis** y el
-> **frontend**. Todo lo demás —los dos servicios, la cola, el outbox, el
-> almacenamiento, Prometheus— está corriendo.
+> Esto ya es el estado real, con una sola excepción: el **frontend**.
+> Todo lo demás —los dos servicios, la cola, el outbox, el
+> almacenamiento, Redis, Prometheus— está corriendo.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/arquitectura-dark.png">
@@ -276,7 +278,7 @@ Los diagramas se generan con [Archify](https://github.com/tt-a1i/archify) a part
 | `upload-api-service` | Auth, persistencia de `Document`/`Job`, subida al storage, escritura del evento en la tabla outbox, **el relay que lo publica**, **la recuperación de fallas** (reaper y consumidor de la DLQ), lectura cacheada, export CSV/PDF | No extrae nada: **ya no tiene ZXing, OpenCV ni PDFBox en el classpath** |
 | `ocr-worker-service` | Consume la cola y corre la **cascada de extracción** (QR → texto embebido → OCR), fusiona por confianza, persiste resultado e invalida cache | No conoce al usuario (el evento no lleva `userId`) |
 | `RabbitMQ` | Desacople y buffer entre ingesta y procesamiento, reintentos y dead-letter | No transporta el archivo (solo el `storageKey`) |
-| `Redis` | Cache-aside de `GET /jobs/:id` (polling intensivo del frontend) | No es fuente de verdad: se invalida, no se actualiza |
+| `Redis` | Cache-aside de `GET /jobs/:id` (polling intensivo del frontend). **La API lee, el worker invalida** | No es fuente de verdad: se invalida, no se actualiza. Y no es obligatorio: si no está, la API responde desde Postgres |
 | Almacenamiento S3 | Guarda los archivos originales. S3Mock en desarrollo, cualquier backend S3-compatible en producción | — |
 | `Prometheus` + `Grafana` | Scrapeo de métricas de ambos servicios y dashboards | — |
 
@@ -734,8 +736,12 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 - `@RabbitListener` con `acknowledge-mode: manual` y `prefetch: 1`, ackeando después del commit ([ADR 012](docs/adr/012-una-extraccion-fallida-se-ackea.md))
 
 ### Redis
-- Redis 7.x, Spring Data Redis (Lettuce)
-- Uso: cache-aside simple en `GET /jobs/{id}`, TTL corto (~30s), invalidación por delete on-write
+- Redis 7.x, Spring Data Redis (Lettuce) — **en uso**
+- Cache-aside en `GET /jobs/{id}`, TTL 30s, invalidación por **delete** on-write
+- Sin persistencia (`--save "" --appendonly no`): un cache que sobrevive al reinicio puede devolver algo de antes de un deploy
+- **Entró último a propósito.** Cachear un read no tiene nada interesante; lo interesante es que la API sirve la respuesta cacheada y **el worker es el que la hace incorrecta**, porque el worker es el que termina el job. Con los dos en un proceso la invalidación sería un `Map.remove` y no demostraría nada
+- **La clave lleva el dueño** (`job:{userId}:{jobId}`), y eso no es prolijidad: `GET /jobs/{id}` responde 404 para un job ajeno, y esa verificación corre contra la fila de la base — que un hit del cache se saltea. Con la clave sin el usuario, el polling de uno llenaría una entrada que se le serviría a otro, y una optimización de performance se habría vuelto un bypass de autorización
+- **Degrada, no falla.** Un miss y un error son lo mismo para el endpoint, así que la API sigue respondiendo desde Postgres mientras Redis reinicia. El costo es una invalidación que falla y deja una respuesta vieja: el TTL es la garantía de último recurso, igual que el barrido detrás del camino rápido del relay y el reaper detrás de la cola
 
 ### Testing
 - JUnit 5 + AssertJ
@@ -1260,7 +1266,7 @@ facturas-ar/
 ├── docs/
 │   ├── architecture.md
 │   ├── diagrams/                 # JSON de Archify + HTML/PNG generados
-│   ├── adr/                        # 13 decisiones, con sus alternativas
+│   ├── adr/                        # 14 decisiones, con sus alternativas
 │   └── api/
 ├── pom.xml                         # parent, packaging=pom
 │
@@ -1318,6 +1324,7 @@ facturas-ar/
 │       ├── persistence/            # los repositorios. UNA base, UN mapeo
 │       ├── storage/                # S3DocumentStorage + su config
 │       ├── messaging/              # RabbitTopology: los dos la declaran
+│       ├── cache/                  # JobCache: la API lee, el worker invalida
 │       └── SharedInfrastructure.java   # un @Import y está todo cableado
 │
 ├── ocr-worker-service/             # runnable Spring Boot app
@@ -1428,8 +1435,17 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 |---|---|---|
 | 1 | ~~Aprender RabbitMQ~~ → **contrato de evento + transactional outbox y su relay** | ✅ |
 | 2 | **RabbitMQ en el medio** (exchange, queue, routing key, ack manual, DLX): el relay publica al broker y un `@RabbitListener` consume, todavía en el mismo servicio | ✅ |
-| 3 | ~~Consumidor de la DLQ con reintentos~~ + **reaper de jobs colgados** · ~~Separar `ocr-worker-service`~~ · invalidación de cache Redis | 🔶 |
-| 4 (buffer) | Testing de casos de falla con Testcontainers: matar el worker a mitad de un job, tirar abajo el broker con eventos pendientes en el outbox | ⬜ |
+| 3 | ~~Consumidor de la DLQ con reintentos~~ + **reaper de jobs colgados** · ~~Separar `ocr-worker-service`~~ · ~~invalidación de cache Redis~~ | ✅ |
+| 4 (buffer) | Testing de casos de falla con Testcontainers: ~~matar el worker a mitad de un job~~ · ~~tirar abajo el broker con eventos pendientes en el outbox~~ | ✅ |
+
+> **La semana 4 se pagó sola.** Los dos casos que listaba terminaron
+> probados mientras se construían las semanas 2 y 3, y no por disciplina:
+> son los dos que no se pueden verificar de otra forma. "Matar el worker
+> a mitad de un job" es el criterio de aceptación 8, y vive en
+> `EndToEndTest`, el único test que levanta los dos servicios. "Tirar
+> abajo el broker" se midió a mano contra el stack —`POST` con RabbitMQ
+> detenido devuelve 202 y el evento sale 52 s después, cuando el broker
+> vuelve— y está en el [ADR 005](docs/adr/005-transactional-outbox.md).
 
 > **Las semanas 1 y 2 se dieron vuelta, y vale decir por qué.** El plan
 > era una semana de aprender RabbitMQ antes de tocar código. El outbox

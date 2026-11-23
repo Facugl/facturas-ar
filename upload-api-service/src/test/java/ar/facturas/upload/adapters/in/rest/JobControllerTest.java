@@ -6,6 +6,7 @@ import ar.facturas.domain.model.Job;
 import ar.facturas.domain.model.User;
 import ar.facturas.infrastructure.persistence.ExtractedInvoiceDataRepository;
 import ar.facturas.infrastructure.persistence.JobRepository;
+import ar.facturas.infrastructure.cache.JobCache;
 import ar.facturas.upload.application.port.CurrentUser;
 import ar.facturas.upload.application.usecase.JobNotConfirmableException;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +17,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -45,12 +48,28 @@ class JobControllerTest {
     @Mock JobRepository jobs;
     @Mock ExtractedInvoiceDataRepository extractedData;
     @Mock CurrentUser currentUser;
+    @Mock JobCache cache;
+    @Mock org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     JobController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new JobController(jobs, extractedData, currentUser);
+        // The controller spells its read transaction out with a
+        // TransactionTemplate instead of annotating the handler, so that
+        // a cache hit opens no transaction at all. Here that means the
+        // manager has to answer, and the template runs the callback
+        // in line.
+        lenient().when(transactionManager.getTransaction(any()))
+                .thenReturn(new SimpleTransactionStatus());
+        // A cache that always misses, so these tests keep asserting what
+        // they were written to assert: what the endpoint does with the
+        // database. The caching itself is covered against a real Redis
+        // in JobCachePostgresTest.
+        lenient().when(cache.get(any(), any())).thenReturn(Optional.empty());
+
+        controller = new JobController(jobs, extractedData, currentUser, cache,
+                JsonMapper.builder().build(), transactionManager);
     }
 
     private static Job jobOwnedBy(UUID userId) {

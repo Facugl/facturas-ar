@@ -2,6 +2,7 @@ package ar.facturas.upload;
 
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.rabbitmq.RabbitMQContainer;
 
@@ -44,9 +45,18 @@ public abstract class ContainersTest {
      */
     static final RabbitMQContainer RABBIT = new RabbitMQContainer("rabbitmq:3.13-alpine");
 
+    /**
+     * Redis, through {@code GenericContainer}: Testcontainers 2.x has no
+     * module for it, and a cache does not need one — an image and a port
+     * is the whole configuration.
+     */
+    static final GenericContainer<?> REDIS =
+            new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+
     static {
         POSTGRES.start();
         RABBIT.start();
+        REDIS.start();
     }
 
     @DynamicPropertySource
@@ -59,6 +69,9 @@ public abstract class ContainersTest {
         registry.add("spring.rabbitmq.port", RABBIT::getAmqpPort);
         registry.add("spring.rabbitmq.username", RABBIT::getAdminUsername);
         registry.add("spring.rabbitmq.password", RABBIT::getAdminPassword);
+
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
 
         // The outbox relay's periodic sweep, pushed out of the way for
         // every test that boots the application.
