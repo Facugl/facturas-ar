@@ -93,11 +93,36 @@ facturas:
 
     # Cuanto puede estar un job en PROCESSING antes de darlo por colgado.
     #
-    # Holgado respecto del peor caso real de extraccion (un PDF escaneado
-    # de varias paginas), si no el reaper se roba jobs que todavia estan
-    # corriendo. El numero sale de medir `invoice.job.processing.time`
-    # (Fase 3); hasta entonces, generoso a proposito.
-    processing-timeout: PT10M
+    # Eran 10 minutos "generoso a proposito porque nada lo midio". Ahora
+    # esta medido, con 25 comprobantes sinteticos con QR real por el
+    # stack completo (invoice.job.processing.time, outcome="extracted"):
+    #
+    #   en el host, con el jar:     p50 112 ms   p95 224 ms   max 1466 ms
+    #   en el contenedor:           p50 103 ms   p95 336 ms
+    #
+    # La segunda es la que cuenta: menos CPU disponible, mas parecido a
+    # como corre esto de verdad.
+    #
+    # 2 minutos son ~360x ese p95 y ~82x el maximo medido. El margen es
+    # enorme a proposito, por dos cosas que la medicion NO cubre:
+    #
+    #   1. El OCR todavia no existe. Tesseract sobre un escaneo de varias
+    #      paginas es el caso lento de verdad, y hoy no se puede medir
+    #      porque Tess4J entra en la semana 5. Una estimacion pesimista
+    #      —10 paginas a 3 s— son 30 s, y 2 minutos siguen siendo 4x eso.
+    #   2. El riesgo no es simetrico. Si el cutoff queda corto el reaper
+    #      le roba el job a un worker que todavia esta trabajando, y ahi
+    #      deja de ser un mecanismo de recuperacion y se vuelve un
+    #      duplicador. Si queda largo, un job colgado tarda mas en
+    #      volver, y eso no le cuesta nada a nadie todavia.
+    #
+    # Lo que hace seguro acortarlo es que ahora el error se VE: un cutoff
+    # corto aparece como un pico en invoice_job_duplicate_delivery_total
+    # y en jobs que terminan FAILED sin motivo. Antes de las metricas,
+    # equivocarse era invisible — por eso 10 minutos.
+    #
+    # Hay que volver a medirlo cuando entre el OCR. La metrica ya esta.
+    processing-timeout: PT2M
 
     # Cuanto espera antes de reintentar un job en FAILED.
     #

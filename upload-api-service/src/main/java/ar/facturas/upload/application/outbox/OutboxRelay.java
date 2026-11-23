@@ -3,6 +3,7 @@ package ar.facturas.upload.application.outbox;
 import ar.facturas.domain.model.OutboxEvent;
 import ar.facturas.events.EventEnvelope;
 import ar.facturas.upload.adapters.out.persistence.OutboxEventRepository;
+import ar.facturas.upload.application.metrics.PipelineMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -55,13 +56,16 @@ public class OutboxRelay {
 
     private final OutboxEventRepository events;
     private final OutboxPublisher publisher;
+    private final PipelineMetrics metrics;
     private final TransactionTemplate tx;
 
     public OutboxRelay(OutboxEventRepository events,
                        OutboxPublisher publisher,
+                       PipelineMetrics metrics,
                        PlatformTransactionManager transactionManager) {
         this.events = events;
         this.publisher = publisher;
+        this.metrics = metrics;
 
         // REQUIRES_NEW, and not the injected TransactionTemplate bean,
         // because of where drain() gets called from. The fast path runs
@@ -93,6 +97,11 @@ public class OutboxRelay {
                 // Managed entity inside the transaction: the UPDATE goes
                 // out on commit, together with everything else here.
                 event.markPublished();
+                // Recorded after the publish and before the commit. If
+                // the transaction then rolls back the event is published
+                // again and timed again, which is the honest reading:
+                // the metric counts deliveries, not rows.
+                metrics.published(event);
             }
             return pending.size();
         });

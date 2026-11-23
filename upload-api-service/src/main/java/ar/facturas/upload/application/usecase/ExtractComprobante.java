@@ -11,6 +11,8 @@ import ar.facturas.extraction.InvoiceField;
 import ar.facturas.upload.adapters.out.persistence.DocumentRepository;
 import ar.facturas.upload.adapters.out.persistence.ExtractedInvoiceDataRepository;
 import ar.facturas.upload.adapters.out.persistence.JobRepository;
+import ar.facturas.upload.application.metrics.PipelineMetrics;
+import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -47,6 +49,7 @@ public class ExtractComprobante {
     private final ExtractedInvoiceDataRepository extractedData;
     private final DocumentStorage storage;
     private final ExtractionOrchestrator orchestrator;
+    private final PipelineMetrics metrics;
     private final TransactionTemplate tx;
 
     /**
@@ -63,8 +66,16 @@ public class ExtractComprobante {
             // Somebody else has it, or it is not in a claimable state.
             // Both are normal under at-least-once delivery.
             log.debug("Job {} was not claimable; skipping", jobId);
+            metrics.duplicateDelivery();
             return;
         }
+
+        // Started after the claim, so the timer measures the work and not
+        // the wait. A delivery that loses the claim does no work at all,
+        // and counting it would pull the distribution towards zero and
+        // make the reaper's timeout look safer than it is.
+        Timer.Sample sample = metrics.startProcessing();
+        String outcome = "failed";
 
         try {
             JobContext context = loadContext(jobId);
@@ -72,12 +83,15 @@ public class ExtractComprobante {
 
             ExtractionResult result = orchestrator.extract(
                     new DocumentContent(bytes, context.mimeType()));
+            metrics.extracted(result);
 
-            persist(jobId, result);
+            outcome = persist(jobId, result);
 
         } catch (RuntimeException e) {
             log.error("Extraction failed for job {}", jobId, e);
             markFailed(jobId, e.getMessage());
+        } finally {
+            metrics.stopProcessing(sample, outcome);
         }
     }
 
@@ -98,9 +112,10 @@ public class ExtractComprobante {
         });
     }
 
-    private void persist(UUID jobId, ExtractionResult result) {
+    /** @return the outcome, which becomes the processing timer's tag */
+    private String persist(UUID jobId, ExtractionResult result) {
         try {
-            persistExtraction(jobId, result);
+            return persistExtraction(jobId, result);
         } catch (DataIntegrityViolationException e) {
             // Two uploads of the same comprobante raced: both looked,
             // both found nothing, both tried to insert. The unique index
@@ -113,12 +128,12 @@ public class ExtractComprobante {
             // it exhausted its retries and died in DEAD_LETTER over a
             // situation that is not an error at all.
             log.info("Job {} lost a race for the same comprobante; marking duplicate", jobId);
-            markDuplicateAfterRace(jobId, result);
+            return markDuplicateAfterRace(jobId, result);
         }
     }
 
-    private void persistExtraction(UUID jobId, ExtractionResult result) {
-        tx.executeWithoutResult(status -> {
+    private String persistExtraction(UUID jobId, ExtractionResult result) {
+        return tx.execute(status -> {
             Job job = jobs.findById(jobId).orElseThrow();
             Document document = job.getDocument();
 
@@ -127,21 +142,24 @@ public class ExtractComprobante {
             document.recordQrDetection(result.qrDetected());
             documents.save(document);
 
-            findDuplicate(document.getUser().getId(), result).ifPresentOrElse(
-                    original -> {
+            String outcome = findDuplicate(document.getUser().getId(), result)
+                    .map(original -> {
                         job.markDuplicateOf(original);
                         log.info("Job {} is a duplicate of {}", jobId, original.getId());
-                    },
-                    () -> {
+                        return "duplicate";
+                    })
+                    .orElseGet(() -> {
                         extractedData.save(toEntity(job, result));
                         job.markExtracted(
                                 result.qrDetected() ? "qr" : null,
                                 result.overallConfidence().orElse(null));
                         log.info("Job {} extracted: {} fields, qr={}",
                                 jobId, result.fields().size(), result.qrDetected());
+                        return "extracted";
                     });
 
             jobs.save(job);
+            return outcome;
         });
     }
 
@@ -151,19 +169,24 @@ public class ExtractComprobante {
      * <p>In its own transaction: the one that hit the constraint is
      * rollback-only and cannot be used for anything else.
      */
-    private void markDuplicateAfterRace(UUID jobId, ExtractionResult result) {
-        tx.executeWithoutResult(status -> {
+    private String markDuplicateAfterRace(UUID jobId, ExtractionResult result) {
+        return tx.execute(status -> {
             Job job = jobs.findById(jobId).orElseThrow();
-            findDuplicate(job.getDocument().getUser().getId(), result)
-                    .ifPresentOrElse(
-                            original -> job.markDuplicateOf(original),
-                            // The constraint fired but the row is not
-                            // there to point at. Nothing sane left to do,
-                            // and a wrong DUPLICATE would be worse than
-                            // an honest failure.
-                            () -> job.markFailed(
-                                    "Unique constraint fired but no matching comprobante was found"));
+            String outcome = findDuplicate(job.getDocument().getUser().getId(), result)
+                    .map(original -> {
+                        job.markDuplicateOf(original);
+                        return "duplicate";
+                    })
+                    // The constraint fired but the row is not there to
+                    // point at. Nothing sane left to do, and a wrong
+                    // DUPLICATE would be worse than an honest failure.
+                    .orElseGet(() -> {
+                        job.markFailed(
+                                "Unique constraint fired but no matching comprobante was found");
+                        return "failed";
+                    });
             jobs.save(job);
+            return outcome;
         });
     }
 

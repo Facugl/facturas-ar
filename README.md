@@ -71,8 +71,8 @@ tocar el código — la imagen compila adentro con el wrapper versionado.
 docker compose up -d --wait
 ```
 
-Levanta Postgres, el almacenamiento S3-compatible, RabbitMQ y la API, en
-ese orden, esperando a que cada uno esté sano. Después:
+Levanta Postgres, el almacenamiento S3-compatible, RabbitMQ, la API y
+Prometheus, en ese orden, esperando a que cada uno esté sano. Después:
 
 | Qué | Dónde |
 |---|---|
@@ -82,6 +82,7 @@ ese orden, esperando a que cada uno esté sano. Después:
 | Postgres | `localhost:5433`, base/usuario/clave `facturas` |
 | Almacenamiento S3 | http://localhost:9090 |
 | **Consola de RabbitMQ** | http://localhost:15672 — `facturas`/`facturas` |
+| **Prometheus** | http://localhost:9091 — el `9090` lo usa S3Mock |
 
 > **Postgres va en el 5433 a propósito.** El 5432 suele estar ocupado por
 > una instalación nativa, y con los dos escuchando la aplicación se
@@ -841,17 +842,66 @@ uno, inofensivo en el otro: es el mejor caso posible para esa decisión.
 > febrero. Las dos cosas se configuran antes de importar.
 
 ### Observabilidad
-- Micrometer (Spring Boot Actuator) + `micrometer-registry-prometheus`
-- Prometheus 2.5x + Grafana
-- Métricas custom clave:
-  - `invoice.qr.detection.rate` (Counter, tag `detected`) — **la métrica más importante del sistema**: es el indicador de salud del pipeline entero
-  - `invoice.extraction.source` (Counter, tags `field` y `source`) — qué proporción de cada campo viene del QR, del texto o del OCR. Dice exactamente dónde invertir esfuerzo
-  - `invoice.field.correction.rate` (Counter, tag `field`) — qué campo corrige más el usuario = qué regla de parseo está peor
-  - `invoice.job.processing.time` (Timer, tag `strategy`) — el QR debe medirse en milisegundos, el OCR en segundos
-  - `invoice.job.outcome` (Counter, tag `status`)
-  - `invoice.ocr.confidence` (DistributionSummary)
-- Logs estructurados JSON (`logstash-logback-encoder`)
-- Opcional (si sobra tiempo): Micrometer Tracing + Zipkin para seguir `jobId` end-to-end
+
+Micrometer (Spring Boot Actuator) + `micrometer-registry-prometheus`,
+scrapeado por **Prometheus 2.54** desde `/actuator/prometheus`. Grafana
+entra con los dashboards.
+
+**Las métricas que publica hoy.** Todas contestan una pregunta que
+alguien tiene de verdad; los nombres y los tags viven en un solo archivo
+([`PipelineMetrics`](upload-api-service/src/main/java/ar/facturas/upload/application/metrics/PipelineMetrics.java))
+porque un nombre tipeado dos veces es una serie que se parte en silencio.
+
+| Métrica | Qué pregunta contesta |
+|---|---|
+| `invoice.qr.detection` (Counter, tags `source`, `document`) | **la más importante del sistema**: qué proporción de comprobantes entrega su QR, y por qué tipo de documento |
+| `invoice.extraction.source` (Counter, tags `field`, `source`) | qué proporción de cada campo viene del QR, del texto o del OCR — dice dónde invertir esfuerzo |
+| `invoice.job.processing.time` (Timer con histograma, tag `outcome`) | cuánto tarda una extracción. **Es el número del que tiene que salir el timeout del reaper** |
+| `invoice.outbox.publish.latency` (Timer con histograma) | el hueco entre que el evento pasó y que salió: si el relay está sano |
+| `invoice.outbox.pending` (Gauge) | cuántos eventos esperan. Sostenido arriba de cero = el transporte está mal |
+| `invoice.recovery.moves` (Counter, tag `outcome`) | qué está haciendo el reaper: `requeued`, `dead_lettered`, `republished` |
+| `invoice.deadletter.received` (Counter, tag `resolution`) | qué llega a la DLQ, y si se pudo rastrear a un job |
+| `invoice.job.duplicate.delivery` (Counter) | con qué frecuencia el at-least-once realmente muerde. **Un cero constante significaría que la idempotencia nunca se ejercitó** |
+
+> **Dos de estos nombres cambiaron respecto de lo que esta sección
+> publicaba, y por qué.**
+>
+> Decía `invoice.qr.detection.rate` con un tag booleano `detected`. Un
+> counter **no es un rate** — el rate lo calcula la consulta, y la
+> convención de Prometheus es que el nombre de un counter sea un total —
+> así que el `.rate` se fue. Y el tag es `source` en vez de `detected`
+> porque es lo que pide el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md)
+> y lleva estrictamente más información: quién leyó el QR, con `detected`
+> todavía derivable como `source != "ninguno"`.
+>
+> Y decía `invoice.job.processing.time` con tag `strategy`, con la idea
+> de "el QR en milisegundos, el OCR en segundos". Ese tag **no mapea**
+> contra lo que el timer mide: el timer envuelve la cascada entera, y una
+> cascada puede usar varias estrategias para un mismo documento, así que
+> no hay una sola a la que atribuirle el tiempo. El tag es `outcome`, que
+> además es lo que hace al timer usable para elegir el cutoff del reaper
+> —una falla rápida no puede arrastrar la distribución de las
+> extracciones que sí funcionan.
+>
+> `invoice.job.outcome` como counter aparte no está: un timer ya publica
+> un `_count` por valor de tag, así que
+> `invoice_job_processing_time_seconds_count{outcome="failed"}` es el
+> mismo número sin un segundo medidor que mantener sincronizado.
+
+**Los nombres salen traducidos**, y así hay que consultarlos: los puntos
+se vuelven guiones bajos, un counter gana `_total`, y un timer se vuelve
+una familia `_seconds_count` / `_seconds_sum` / `_seconds_bucket`. Nada
+en el código Java lo dice, así que
+[`PipelineMetricsPostgresTest`](upload-api-service/src/test/java/ar/facturas/upload/application/metrics/PipelineMetricsPostgresTest.java)
+lo fija aserción contra el texto exacto que Prometheus recibe. Un nombre
+de métrica es un contrato con un panel y con una alerta, y es un contrato
+que se rompe en silencio: si lo renombrás, la consulta no falla —
+devuelve vacío, que se ve igual que un sistema sano.
+
+**Lo que falta:** `invoice.field.correction.rate` necesita el formulario
+de revisión (no hay correcciones que contar todavía) e
+`invoice.ocr.confidence` necesita el OCR. Logs estructurados JSON y
+dashboards de Grafana, con la semana 2 de la Fase 3.
 
 > Un dashboard con "tasa de detección de QR" y "origen de cada campo" es mucho más interesante de mostrar que uno con uso de CPU: habla del problema, no de la máquina.
 
@@ -1247,6 +1297,8 @@ facturas-ar/
 │       ├── application/outbox/     # Outbox (escribe), OutboxRelay (vacía),
 │       │                           #   OutboxPublisher (el puerto al transporte)
 │       ├── application/event/      # ComprobanteUploaded + DrainOutboxOnUpload
+│       ├── application/recovery/   # RecoverJobs: el reaper
+│       ├── application/metrics/    # PipelineMetrics: los nombres, en un solo lugar
 │       ├── application/export/     # ComprobanteCsvWriter: las reglas Excel-AR
 │       ├── application/port/       # CurrentUser
 │       └── config/                 # S3, cascada, usuario de dev, RabbitTopology
@@ -1268,8 +1320,8 @@ facturas-ar/
 │   └── src/
 │
 ├── monitoring/
-│   ├── prometheus/prometheus.yml
-│   └── grafana/{provisioning,dashboards}/
+│   ├── prometheus/prometheus.yml   # scrapea /actuator/prometheus
+│   └── grafana/{provisioning,dashboards}/   # FASE 3, semana 2
 │
 └── scripts/
     └── seed-demo-data.sh

@@ -5,6 +5,7 @@ import ar.facturas.domain.model.Document;
 import ar.facturas.domain.model.Job;
 import ar.facturas.events.JobExtractionRequested;
 import ar.facturas.upload.adapters.out.persistence.JobRepository;
+import ar.facturas.upload.application.metrics.PipelineMetrics;
 import ar.facturas.upload.application.outbox.Outbox;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +46,7 @@ public class RequeueJob {
 
     private final JobRepository jobs;
     private final Outbox outbox;
+    private final PipelineMetrics metrics;
 
     /** What was decided about the job. */
     public enum Outcome {
@@ -70,6 +72,15 @@ public class RequeueJob {
 
     @Transactional
     public Outcome execute(UUID jobId, String reason) {
+        Outcome outcome = decide(jobId, reason);
+        // Counted here and not in each caller: the reaper and the
+        // dead-letter consumer both come through this method, so one
+        // call site is one place the counter can be forgotten.
+        metrics.recovered(outcome);
+        return outcome;
+    }
+
+    private Outcome decide(UUID jobId, String reason) {
         Job job = jobs.findById(jobId).orElse(null);
         if (job == null) {
             return Outcome.GONE;

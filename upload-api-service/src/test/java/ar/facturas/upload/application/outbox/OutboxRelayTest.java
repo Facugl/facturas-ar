@@ -4,6 +4,7 @@ import ar.facturas.domain.model.OutboxEvent;
 import ar.facturas.events.EventEnvelope;
 import ar.facturas.events.JobExtractionRequested;
 import ar.facturas.upload.adapters.out.persistence.OutboxEventRepository;
+import ar.facturas.upload.application.metrics.PipelineMetrics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class OutboxRelayTest {
 
     @Mock OutboxEventRepository events;
     @Mock OutboxPublisher publisher;
+    @Mock PipelineMetrics metrics;
     @Mock PlatformTransactionManager transactionManager;
 
     OutboxRelay relay;
@@ -46,7 +48,7 @@ class OutboxRelayTest {
     @BeforeEach
     void setUp() {
         when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
-        relay = new OutboxRelay(events, publisher, transactionManager);
+        relay = new OutboxRelay(events, publisher, metrics, transactionManager);
     }
 
     private static OutboxEvent pending(UUID jobId) {

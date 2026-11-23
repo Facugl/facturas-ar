@@ -6,6 +6,7 @@ import ar.facturas.domain.model.Job;
 import ar.facturas.domain.model.User;
 import ar.facturas.events.JobExtractionRequested;
 import ar.facturas.upload.adapters.out.persistence.JobRepository;
+import ar.facturas.upload.application.metrics.PipelineMetrics;
 import ar.facturas.upload.application.outbox.Outbox;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -41,13 +42,14 @@ class RequeueJobTest {
 
     @Mock JobRepository jobs;
     @Mock Outbox outbox;
+    @Mock PipelineMetrics metrics;
 
     RequeueJob requeueJob;
     User user;
 
     @BeforeEach
     void setUp() {
-        requeueJob = new RequeueJob(jobs, outbox);
+        requeueJob = new RequeueJob(jobs, outbox, metrics);
         user = new User(UUID.randomUUID(), "ana@test.ar", "hash");
     }
 

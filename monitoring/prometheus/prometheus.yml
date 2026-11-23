@@ -1,0 +1,22 @@
+# Scrapeo de la API. Un solo target por ahora; cuando el worker sea un
+# servicio aparte se agrega al mismo job y las series quedan separadas
+# por la etiqueta `instance` sin tocar ninguna consulta.
+
+global:
+  # Cada 15s. Las métricas de este sistema son de eventos discretos
+  # (comprobantes subidos, jobs recuperados), no de carga continua, así
+  # que medir más seguido no agrega información — agrega series.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: facturas
+    # Actuator no publica en /metrics sino acá, y Prometheus no lo
+    # adivina: sin esta línea el target queda DOWN con un 404 y el
+    # mensaje no dice nada de todo esto.
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # Nombre del servicio adentro de la red de compose, puerto INTERNO.
+      - targets: ["upload-api-service:8080"]
+        labels:
+          service: upload-api

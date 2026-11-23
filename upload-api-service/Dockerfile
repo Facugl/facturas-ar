@@ -27,9 +27,10 @@ RUN chmod +x mvnw
 # Maven Central.
 COPY pom.xml .
 COPY shared-domain/pom.xml shared-domain/
+COPY shared-events/pom.xml shared-events/
 COPY extraction/pom.xml extraction/
 COPY upload-api-service/pom.xml upload-api-service/
-RUN ./mvnw -B -q dependency:go-offline -DexcludeArtifactIds=shared-domain,extraction || true
+RUN ./mvnw -B -q dependency:go-offline -DexcludeArtifactIds=shared-domain,shared-events,extraction || true
 
 # Ahora el código. A partir de acá sí se recompila en cada cambio.
 #
@@ -37,7 +38,12 @@ RUN ./mvnw -B -q dependency:go-offline -DexcludeArtifactIds=shared-domain,extrac
 # módulo recién creado todavía no tiene src/ y `COPY` falla si la ruta no
 # existe. Le pasaba a `extraction` cuando era solo un pom; se deja así
 # para que agregar el próximo módulo no vuelva a romper el build.
+#
+# Y aun así se rompió: `shared-events` nació con el outbox y esta lista
+# no se actualizó, asi que la imagen no compilaba mientras el jar en el
+# host sí. El build de la imagen hay que correrlo, no suponerlo.
 COPY shared-domain shared-domain
+COPY shared-events shared-events
 COPY extraction extraction
 COPY upload-api-service upload-api-service
 

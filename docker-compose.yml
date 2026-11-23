@@ -1,8 +1,8 @@
 # Infraestructura local.
 #
-# Redis, Prometheus y Grafana entran en las Fases 2 y 3. Mantener acá
-# solo lo que el código usa hoy: si levantás servicios que nadie
-# consume, dejás de saber qué necesita realmente el sistema.
+# Redis y Grafana entran en las Fases 2 y 3. Mantener acá solo lo que el
+# código usa hoy: si levantás servicios que nadie consume, dejás de
+# saber qué necesita realmente el sistema.
 
 services:
   postgres:
@@ -109,5 +109,29 @@ services:
     ports:
       - "8080:8080"
 
+  # Scrapea /actuator/prometheus de la API.
+  #
+  # Entra ahora y no con los dashboards porque hay un numero que depende
+  # de esto: el timeout del reaper son 10 minutos "generoso a proposito"
+  # porque nada midio cuanto tarda una extraccion. Ver la nota en
+  # application.yml.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: facturas-prometheus
+    depends_on:
+      upload-api-service:
+        condition: service_started
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      # 15 dias alcanzan para elegir un timeout y ver una tendencia; la
+      # retencion larga es un problema de produccion, no de desarrollo.
+      - --storage.tsdb.retention.time=15d
+    ports:
+      - "9091:9090"   # 9091 en el host: el 9090 lo usa S3Mock
+
 volumes:
   postgres-data:
+  prometheus-data:

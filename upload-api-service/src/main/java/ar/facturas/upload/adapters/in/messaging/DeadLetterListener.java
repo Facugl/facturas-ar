@@ -1,6 +1,7 @@
 package ar.facturas.upload.adapters.in.messaging;
 
 import ar.facturas.upload.adapters.out.persistence.OutboxEventRepository;
+import ar.facturas.upload.application.metrics.PipelineMetrics;
 import ar.facturas.upload.application.usecase.RequeueJob;
 import ar.facturas.upload.config.RabbitTopology;
 import com.rabbitmq.client.Channel;
@@ -60,6 +61,7 @@ public class DeadLetterListener {
 
     private final OutboxEventRepository outbox;
     private final RequeueJob requeueJob;
+    private final PipelineMetrics metrics;
 
     @RabbitListener(queues = RabbitTopology.DLQ)
     public void on(Message message, Channel channel) throws IOException {
@@ -82,6 +84,7 @@ public class DeadLetterListener {
                 return;
             }
 
+            metrics.deadLetterReceived("traced");
             RequeueJob.Outcome outcome = requeueJob.execute(jobId.get(),
                     "its request was rejected by the consumer and dead-lettered");
             log.info("Dead-letter message {} resolved as {} for job {}",
