@@ -64,18 +64,32 @@ import static org.mockito.Mockito.when;
  * it is why every assertion about an outcome is awaited rather than made
  * on the next line.
  *
- * <p>The wire format is inspected through a second queue bound to the
- * same exchange and routing key, so every published message is delivered
- * to the consumer <em>and</em> to the test. Stopping the listener to
- * intercept a message would have been the other option, and a test that
- * leaves a listener stopped when it fails is a test that breaks the
- * ones after it.
+ * <p>Messages are inspected through second queues bound to the same
+ * exchanges — one on {@code invoice.processing}, one on the dead-letter
+ * exchange — so everything published is delivered to the real consumers
+ * <em>and</em> to the test. Stopping a listener to intercept a message
+ * would have been the other option, and a test that leaves a listener
+ * stopped when it fails is a test that breaks the ones after it. It also
+ * keeps these tests about the routing rather than about what
+ * {@code DeadLetterListener} then does with the message, which is
+ * {@code RecoveryPostgresTest}'s subject.
  */
 @SpringBootTest
 class RabbitMessagingTest extends ContainersTest {
 
     /** Receives a copy of everything the relay publishes. */
     static final String SPY_QUEUE = "test.wire.spy";
+
+    /**
+     * Receives a copy of everything that gets dead-lettered.
+     *
+     * <p>Needed because {@code DeadLetterListener} now reads the real
+     * dead-letter queue, so a test that pulled messages out of it would
+     * be racing the consumer it is not testing. A second queue on the
+     * dead-letter exchange sees the same messages without competing for
+     * them, which is what keeps these tests about the <em>routing</em>.
+     */
+    static final String DLX_SPY_QUEUE = "test.dlx.spy";
 
     private static final Duration PATIENCE = Duration.ofSeconds(20);
 
@@ -101,6 +115,7 @@ class RabbitMessagingTest extends ContainersTest {
         admin.purgeQueue(RabbitTopology.QUEUE);
         admin.purgeQueue(RabbitTopology.DLQ);
         admin.purgeQueue(SPY_QUEUE);
+        admin.purgeQueue(DLX_SPY_QUEUE);
         outbox.deleteAll();
 
         when(storage.store(any(), anyString())).thenReturn("documents/2026/11/stored.pdf");
@@ -136,6 +151,12 @@ class RabbitMessagingTest extends ContainersTest {
         admin.declareBinding(BindingBuilder.bind(spy)
                 .to(new TopicExchange(RabbitTopology.EXCHANGE, true, false))
                 .with(JobExtractionRequested.TYPE));
+
+        Queue dlxSpy = QueueBuilder.nonDurable(DLX_SPY_QUEUE).build();
+        admin.declareQueue(dlxSpy);
+        admin.declareBinding(BindingBuilder.bind(dlxSpy)
+                .to(new TopicExchange(RabbitTopology.DLX, true, false))
+                .with(RabbitTopology.FAILED_KEY));
     }
 
     // ── Fixtures ──────────────────────────────────────────────────────
@@ -290,7 +311,7 @@ class RabbitMessagingTest extends ContainersTest {
             sendDirectly(messageWith(JobExtractionRequested.TYPE, 1,
                     "esto no es el payload que dice ser".getBytes(StandardCharsets.UTF_8)));
 
-            Message dead = rabbit.receive(RabbitTopology.DLQ, PATIENCE.toMillis());
+            Message dead = rabbit.receive(DLX_SPY_QUEUE, PATIENCE.toMillis());
 
             assertThat(dead).as("the message was dropped instead of dead-lettered").isNotNull();
             assertThat(new String(dead.getBody(), StandardCharsets.UTF_8))
@@ -310,7 +331,7 @@ class RabbitMessagingTest extends ContainersTest {
                     "ilegible".getBytes(StandardCharsets.UTF_8)));
 
             await().atMost(PATIENCE).untilAsserted(() ->
-                    assertThat(depthOf(RabbitTopology.DLQ)).isEqualTo(1L));
+                    assertThat(depthOf(DLX_SPY_QUEUE)).isEqualTo(1L));
 
             assertThat(depthOf(RabbitTopology.QUEUE)).isZero();
         }
@@ -331,7 +352,7 @@ class RabbitMessagingTest extends ContainersTest {
 
             sendDirectly(noVersion);
 
-            assertThat(rabbit.receive(RabbitTopology.DLQ, PATIENCE.toMillis())).isNotNull();
+            assertThat(rabbit.receive(DLX_SPY_QUEUE, PATIENCE.toMillis())).isNotNull();
         }
 
         /**
@@ -353,7 +374,7 @@ class RabbitMessagingTest extends ContainersTest {
             await().atMost(PATIENCE).untilAsserted(() ->
                     assertThat(depthOf(RabbitTopology.QUEUE)).isZero());
             // ...and does not turn up as a failure.
-            assertThat(depthOf(RabbitTopology.DLQ)).isZero();
+            assertThat(depthOf(DLX_SPY_QUEUE)).isZero();
         }
     }
 }

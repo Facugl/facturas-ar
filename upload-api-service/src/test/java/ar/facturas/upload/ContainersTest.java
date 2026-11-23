@@ -71,5 +71,12 @@ public abstract class ContainersTest {
         // where it can be tested deterministically: OutboxRelayTest
         // calls it directly, and OutboxPostgresTest calls drain().
         registry.add("facturas.outbox.sweep-interval", () -> "PT1H");
+
+        // And the reaper, for the same reason and more sharply: it moves
+        // jobs between states on a timer, so one running in a cached
+        // context would requeue the very job another test left in
+        // PROCESSING on purpose. It is tested by calling recover()
+        // directly with explicit cutoffs.
+        registry.add("facturas.recovery.interval", () -> "PT1H");
     }
 }

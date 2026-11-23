@@ -81,6 +81,34 @@ facturas:
     # Duration lo que empieza con P).
     sweep-interval: PT5S
 
+  recovery:
+    # El reaper: los jobs que ninguna cola va a mover.
+    #
+    # Lee la BASE, no una cola, y eso es lo que lo hace la garantia. Una
+    # cola solo puede contarte de un mensaje que todavia tiene; la tabla
+    # `jobs` sabe de todo job que necesita trabajo sin importar que paso
+    # con ningun mensaje. Es la misma razon por la que el relay del
+    # outbox tiene un barrido periodico detras de su camino rapido.
+    interval: PT1M
+
+    # Cuanto puede estar un job en PROCESSING antes de darlo por colgado.
+    #
+    # Holgado respecto del peor caso real de extraccion (un PDF escaneado
+    # de varias paginas), si no el reaper se roba jobs que todavia estan
+    # corriendo. El numero sale de medir `invoice.job.processing.time`
+    # (Fase 3); hasta entonces, generoso a proposito.
+    processing-timeout: PT10M
+
+    # Cuanto espera antes de reintentar un job en FAILED.
+    #
+    # Sin esto el reaper se quemaria los tres intentos en tres de sus
+    # propias corridas, y eso no ayuda a nadie: un PDF corrupto falla
+    # igual las tres veces, y una caida transitoria necesita mas de tres
+    # minutos para pasar. Es un backoff crudo — uno de verdad necesita el
+    # plugin de delayed message de RabbitMQ, que esta fuera de alcance
+    # para la v1.
+    failed-retry-delay: PT5M
+
   storage:
     # S3Mock en dev. En producción, el endpoint de S3 real o el que
     # corresponda: el código va por el SDK de S3 y no sabe la diferencia.

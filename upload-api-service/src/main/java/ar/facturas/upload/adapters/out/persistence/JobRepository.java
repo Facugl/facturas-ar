@@ -54,14 +54,50 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
      * extraction (a scanned multi-page PDF), or the reaper starts stealing
      * jobs that are still running. Measure it with
      * {@code invoice.job.processing.time} before picking a number.
+     *
+     * <p><strong>No filter on {@code retryCount}, and that is a
+     * correction.</strong> It had one, which left a job stuck in
+     * {@code PROCESSING} with its retries spent invisible forever: no
+     * query found it, nothing moved it, and {@code PROCESSING} is not a
+     * state work can start from. Whether there is an attempt left is the
+     * caller's decision — {@link ar.facturas.upload.application.usecase.RequeueJob}
+     * either schedules another attempt or ends the job in
+     * {@code DEAD_LETTER} — but the job has to be found either way.
      */
     @Query("""
             SELECT j FROM Job j
              WHERE j.status = ar.facturas.domain.enums.JobStatus.PROCESSING
                AND j.startedAt < :cutoff
-               AND j.retryCount < j.maxRetries
+             ORDER BY j.startedAt
             """)
     List<Job> findStuck(@Param("cutoff") Instant cutoff);
+
+    /**
+     * Jobs resting in {@code FAILED}, waiting for another attempt.
+     *
+     * <p>These never reach the dead-letter queue. By
+     * <a href="../../../../../../../../docs/adr/012-una-extraccion-fallida-se-ackea.md">ADR 012</a>
+     * a failed extraction is acknowledged — the message delivered a
+     * request that was carried out, and the outcome is written on the
+     * job — so the only record that an attempt failed is this row. That
+     * makes the reaper, and not a queue consumer, the owner of retrying
+     * them.
+     *
+     * <p>Aged by {@code startedAt}, which is when the attempt that failed
+     * began. {@code markFailed} records no timestamp of its own, and
+     * {@code startedAt} is close enough: an extraction that fails takes
+     * seconds, not hours. Without any delay the reaper would burn all
+     * three attempts within three of its own cycles, which helps nothing
+     * — a corrupt PDF fails identically every time, and a transient
+     * outage needs longer than that to pass.
+     */
+    @Query("""
+            SELECT j FROM Job j
+             WHERE j.status = ar.facturas.domain.enums.JobStatus.FAILED
+               AND j.startedAt < :cutoff
+             ORDER BY j.startedAt
+            """)
+    List<Job> findFailedReadyToRetry(@Param("cutoff") Instant cutoff);
 
     /**
      * The most recent job for a document.
