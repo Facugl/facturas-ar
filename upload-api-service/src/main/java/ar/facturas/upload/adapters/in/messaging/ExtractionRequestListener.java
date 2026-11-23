@@ -2,39 +2,58 @@ package ar.facturas.upload.adapters.in.messaging;
 
 import ar.facturas.events.EventEnvelope;
 import ar.facturas.events.JobExtractionRequested;
+import ar.facturas.upload.adapters.out.messaging.RabbitOutboxPublisher;
 import ar.facturas.upload.application.usecase.ExtractComprobante;
+import ar.facturas.upload.config.RabbitTopology;
+import com.rabbitmq.client.Channel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.event.TransactionalEventListener;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.UUID;
+
 /**
- * Consumes {@code job.extraction.requested} and runs the extraction.
+ * Consumes {@code job.extraction.requested} off the queue and runs the
+ * extraction.
  *
- * <p>Stands in for the {@code @RabbitListener} that will live in
- * {@code ocr-worker-service}. It is written the way a queue consumer is
- * written, not the way an in-process listener would be: it reads the
- * type and the version off the envelope before trusting the payload,
- * deserializes it itself, and does nothing it cannot do twice.
+ * <p>In Fase 2 week 3 this class moves to {@code ocr-worker-service}
+ * unchanged. It is already written as a queue consumer and not as an
+ * in-process listener: it reads the type and the version off the
+ * envelope before trusting the body, and it does nothing it cannot do
+ * twice.
  *
- * <p><strong>After the relay's commit, not before.</strong> The
- * extraction claims the job with a conditional {@code UPDATE}, so the
- * row has to be visible to other transactions first — and the
- * {@code published_at} it is reacting to has to be durable, or it would
- * be working on an event that never officially went out.
+ * <p><strong>Manual acknowledgement, and the order matters.</strong> The
+ * ack goes out <em>after</em> the extraction has committed, never before.
+ * Acking first would mean a crash mid-extraction loses the message for
+ * good, leaving a job stuck in {@code PROCESSING} with nothing left to
+ * reprocess it. Acking last means a crash leads to redelivery, which the
+ * atomic claim absorbs. Of the two failures only one is recoverable, so
+ * the choice is not a preference.
  *
- * <p>Still synchronous: the user waits for the extraction, exactly as
- * before the outbox existed. That is deliberate for Fase 1. The outbox
- * fixed the dual write, which is a correctness problem; the waiting is a
- * latency problem and it is what the queue fixes.
+ * <p><strong>A failed extraction is an ack, not a nack.</strong> That
+ * looks wrong at first glance and it is the central decision here.
+ * {@link ExtractComprobante} already catches its own failures and
+ * records them on the job as {@code FAILED}, which is a resting state
+ * the retrier owns. The message did its job: it delivered a request that
+ * was carried out, and the outcome is written down. Nacking it would put
+ * the same work in the dead-letter queue <em>as well</em>, so the same
+ * failure would be tracked in two places that can disagree.
  *
- * <p>Duplicate delivery is assumed, not guarded against here — the
- * relay can publish the same event twice and
- * {@code JobRepository#claim} is what absorbs it.
+ * <p>A nack is for a message this consumer cannot process <em>at
+ * all</em>: a body that is not the payload it claims to be, a version it
+ * was not written for, a database it cannot reach. Those go to the
+ * dead-letter queue with {@code requeue=false}, because requeueing a
+ * message that will fail the same way is a hot loop — it would be
+ * redelivered as fast as the broker can manage, forever.
  *
- * <p>In Fase 2 this class moves to the worker and the annotation
- * changes. The body does not.
+ * @see RabbitTopology
  */
 @Component
 @RequiredArgsConstructor
@@ -46,29 +65,88 @@ public class ExtractionRequestListener {
     /** Jackson 3, which is what Spring Boot 4 autoconfigures. See {@code Outbox}. */
     private final JsonMapper json;
 
-    @TransactionalEventListener
-    public void on(EventEnvelope envelope) {
-        if (!envelope.is(JobExtractionRequested.TYPE, JobExtractionRequested.VERSION)) {
-            // Not ours, or a version this consumer was not written for.
-            // Ignoring it rather than failing is what lets a new event
-            // type be introduced without a coordinated deployment.
-            log.debug("Ignoring {} v{}", envelope.eventType(), envelope.eventVersion());
+    @RabbitListener(queues = RabbitTopology.QUEUE)
+    public void on(Message message, Channel channel) throws IOException {
+        long deliveryTag = message.getMessageProperties().getDeliveryTag();
+        boolean redelivered = message.getMessageProperties().isRedelivered();
+
+        UUID jobId;
+        try {
+            EventEnvelope envelope = envelopeOf(message);
+
+            if (!envelope.is(JobExtractionRequested.TYPE, JobExtractionRequested.VERSION)) {
+                // Not ours, or a version this consumer was not written
+                // for. Acked and dropped rather than dead-lettered: it
+                // arrived correctly, we are simply not its reader, and
+                // that is what lets a new event type be introduced
+                // without a coordinated deployment.
+                log.debug("Acking and ignoring {} v{}",
+                        envelope.eventType(), envelope.eventVersion());
+                channel.basicAck(deliveryTag, false);
+                return;
+            }
+
+            jobId = json.readValue(envelope.payload(), JobExtractionRequested.class).jobId();
+
+        } catch (RuntimeException e) {
+            // Unreadable. No amount of redelivery will make it readable,
+            // so it goes to the dead-letter queue where it can be looked
+            // at instead of looping.
+            log.error("Dead-lettering message {}: it is not a payload this consumer can read",
+                    message.getMessageProperties().getMessageId(), e);
+            channel.basicNack(deliveryTag, false, false);
             return;
         }
 
-        JobExtractionRequested payload = deserialize(envelope);
-        log.debug("Extracting job {} (event={})", payload.jobId(), envelope.eventId());
-        extractComprobante.execute(payload.jobId());
+        try {
+            if (redelivered) {
+                log.info("Job {} was redelivered; the claim decides whether there is work", jobId);
+            }
+            extractComprobante.execute(jobId);
+
+            // Only now. Everything the extraction had to write is
+            // committed, so losing the message from here on costs
+            // nothing.
+            channel.basicAck(deliveryTag, false);
+
+        } catch (RuntimeException e) {
+            // ExtractComprobante records its own failures on the job, so
+            // reaching here means something underneath it broke — the
+            // database, most likely. The work was not done and was not
+            // written down either, which is exactly what the dead-letter
+            // queue is for.
+            log.error("Dead-lettering the request for job {}: the extraction could not even "
+                      + "record its own outcome", jobId, e);
+            channel.basicNack(deliveryTag, false, false);
+        }
     }
 
-    private JobExtractionRequested deserialize(EventEnvelope envelope) {
-        try {
-            return json.readValue(envelope.payload(), JobExtractionRequested.class);
-        } catch (Exception e) {
-            throw new IllegalStateException(
-                    "Event " + envelope.eventId() + " carries a payload this consumer "
-                    + "cannot read, although it declares " + envelope.eventType()
-                    + " v" + envelope.eventVersion(), e);
-        }
+    /**
+     * Rebuilds the envelope from the AMQP properties the publisher put it
+     * in. The mapping is documented on {@link RabbitOutboxPublisher}.
+     */
+    private static EventEnvelope envelopeOf(Message message) {
+        MessageProperties properties = message.getMessageProperties();
+        return new EventEnvelope(
+                UUID.fromString(properties.getMessageId()),
+                properties.getType(),
+                versionOf(properties),
+                properties.getTimestamp() == null
+                        ? Instant.EPOCH
+                        : properties.getTimestamp().toInstant(),
+                new String(message.getBody(), StandardCharsets.UTF_8));
+    }
+
+    /**
+     * A missing or non-numeric version header reads as 0, which
+     * {@link EventEnvelope} refuses to be constructed with — so the
+     * message is dead-lettered rather than guessed at. Defaulting it to
+     * 1 would be the dangerous reading: an unversioned message would be
+     * processed as if it were v1, which is the one assumption a version
+     * field exists to prevent.
+     */
+    private static int versionOf(MessageProperties properties) {
+        Object header = properties.getHeader(RabbitOutboxPublisher.VERSION_HEADER);
+        return header instanceof Number version ? version.intValue() : 0;
     }
 }

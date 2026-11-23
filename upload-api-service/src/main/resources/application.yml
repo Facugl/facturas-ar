@@ -22,6 +22,41 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: facturas
+    password: facturas
+
+    # El relay espera la confirmación del broker antes de marcar el
+    # evento como publicado. Sin esto, `send` que vuelve sin excepción
+    # solo significa que los bytes llegaron al socket: un broker que
+    # muere antes de escribir el mensaje se lo lleva, y el relay ya
+    # marcó la fila como publicada. El evento se pierde sin rastro, que
+    # es justo la falla que el outbox existe para descartar.
+    #
+    # `simple` y no `correlated`: correlated entrega las confirmaciones
+    # por callback asincrónico, y el relay necesita saber el resultado
+    # antes de commitear su transacción. Con simple se puede esperar
+    # dentro de un `invoke`, que es sincrónico.
+    publisher-confirm-type: simple
+
+    listener:
+      simple:
+        # El ack lo manda el consumidor, después de que la extracción
+        # commiteó. Con `auto` (el default) Spring confirma el mensaje al
+        # volver del método: una caída a mitad de la extracción perdería
+        # el mensaje y dejaría el job en PROCESSING sin nada que lo
+        # reprocese.
+        acknowledge-mode: manual
+        # Un mensaje por vez. La extracción es trabajo de CPU y de I/O
+        # con el almacenamiento, no una llamada corta: traer veinte
+        # mensajes por adelantado solo los deja esperando en memoria de
+        # este consumidor en vez de en la cola, donde otro los podría
+        # tomar. El número sube cuando haya más de un worker y se haya
+        # medido.
+        prefetch: 1
+
   servlet:
     multipart:
       max-file-size: 10MB

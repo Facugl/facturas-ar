@@ -10,7 +10,7 @@ import ar.facturas.domain.port.DocumentStorage;
 import ar.facturas.events.JobExtractionRequested;
 import ar.facturas.extraction.ExtractionOrchestrator;
 import ar.facturas.extraction.ExtractionResult;
-import ar.facturas.upload.PostgresTest;
+import ar.facturas.upload.ContainersTest;
 import ar.facturas.upload.adapters.out.persistence.DocumentRepository;
 import ar.facturas.upload.adapters.out.persistence.JobRepository;
 import ar.facturas.upload.adapters.out.persistence.OutboxEventRepository;
@@ -29,6 +29,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -39,6 +40,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -63,9 +65,18 @@ import static org.mockito.Mockito.when;
  *       and it is only true if the row survived a commit.</li>
  * </ul>
  *
- * <p>The transport is the in-process publisher, which is what runs in
- * production today, so the whole chain is exercised: the upload's
- * transaction, the relay, the JSON round trip, and the consumer.
+ * <p>The transport is a real RabbitMQ, so the whole chain runs: the
+ * upload's transaction, the relay, the broker, and the consumer. What
+ * the broker specifically does with a message — redelivery without an
+ * ack, the dead-letter queue, the publisher confirmation — is
+ * {@code RabbitMessagingTest}'s subject, not this one's.
+ *
+ * <p><strong>The extraction is asynchronous now</strong>, which is the
+ * point of the queue: the relay's job ends when the broker confirms the
+ * message, and the consumer runs on its own thread afterwards. So
+ * anything about the job's state is awaited rather than asserted
+ * directly — asserting it on the next line would be a race that passes
+ * on a fast machine.
  *
  * <p>Two things are stubbed, both outside the boundary under test: object
  * storage, whose real adapter reaches for a bucket as it starts, and the
@@ -77,7 +88,7 @@ import static org.mockito.Mockito.when;
  * and from every test owning its own user.
  */
 @SpringBootTest
-class OutboxPostgresTest extends PostgresTest {
+class OutboxPostgresTest extends ContainersTest {
 
     /** Keeps file hashes and filenames unique across the class. */
     private static final AtomicLong SEQUENCE = new AtomicLong(1_000);
@@ -251,8 +262,12 @@ class OutboxPostgresTest extends PostgresTest {
             assertThat(relay.drain()).isEqualTo(1);
 
             assertThat(eventOf(jobId).getPublishedAt()).isNotNull();
-            // And it really reached the consumer: the job left PENDING.
-            assertThat(statusOf(jobId)).isEqualTo(JobStatus.EXTRACTED);
+
+            // And it really reached the consumer, which now happens on
+            // the broker's schedule rather than on this thread's.
+            await().atMost(Duration.ofSeconds(15))
+                    .untilAsserted(() -> assertThat(statusOf(jobId))
+                            .isEqualTo(JobStatus.EXTRACTED));
         }
 
         @Test

@@ -6,7 +6,7 @@ import ar.facturas.domain.model.Job;
 import ar.facturas.domain.model.User;
 import ar.facturas.domain.port.DocumentStorage;
 import ar.facturas.domain.vo.Cuit;
-import ar.facturas.upload.PostgresTest;
+import ar.facturas.upload.ContainersTest;
 import ar.facturas.upload.application.port.CurrentUser;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -53,7 +53,7 @@ import static org.assertj.core.api.Assertions.tuple;
  * file, and the real adapter reaches for a bucket as it starts.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class ExportQueryTest extends PostgresTest {
+class ExportQueryTest extends ContainersTest {
 
     private static final LocalDate MARCH_1 = LocalDate.of(2026, 3, 1);
     private static final LocalDate MARCH_31 = LocalDate.of(2026, 3, 31);

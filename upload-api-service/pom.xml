@@ -49,6 +49,13 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
+    <!-- El transporte de los eventos del outbox. Reemplaza al publisher
+         in-process con el que nacio el outbox: el patron no cambia, solo
+         quien lleva el mensaje. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
     <!-- Sin esto, /actuator/prometheus simplemente no existe: Actuator
          solo publica el endpoint si encuentra un registry en el classpath.
          Las metricas propias del dominio llegan en la Fase 3, pero el
@@ -124,6 +131,14 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Un broker de verdad en los tests. Un RabbitTemplate mockeado no
+         dice nada de lo unico que importa probar aca: que un mensaje sin
+         ack vuelve, y que uno rechazado termina en la DLQ. -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-rabbitmq</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

@@ -1,8 +1,8 @@
-# Infraestructura local — Fase 1 (síncrona).
+# Infraestructura local.
 #
-# RabbitMQ, Redis, Prometheus y Grafana entran en las Fases 2 y 3.
-# Mantener acá solo lo que el código usa hoy: si levantás servicios
-# que nadie consume, dejás de saber qué necesita realmente el sistema.
+# Redis, Prometheus y Grafana entran en las Fases 2 y 3. Mantener acá
+# solo lo que el código usa hoy: si levantás servicios que nadie
+# consume, dejás de saber qué necesita realmente el sistema.
 
 services:
   postgres:
@@ -54,6 +54,32 @@ services:
     # Nota: los archivos quedan en un temp dir adentro del contenedor y se
     # pierden al recrearlo. Para desarrollo alcanza.
 
+  # El transporte de los eventos del outbox.
+  #
+  # La imagen `management` en vez de la pelada: trae la consola web en el
+  # 15672, y para un proyecto cuyo argumento es mensajería asíncrona,
+  # poder abrir la cola y ver el mensaje adentro no es un lujo — es la
+  # mitad de cómo se depura esto. Cuesta unos MB de imagen.
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: facturas-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: facturas
+      RABBITMQ_DEFAULT_PASS: facturas
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # consola: http://localhost:15672 (facturas/facturas)
+    healthcheck:
+      # `check_running` y no un simple ping al puerto: el 5672 acepta
+      # conexiones antes de que el nodo esté listo para declarar colas, y
+      # ahí la aplicación arranca, falla al declarar la topología y
+      # reintenta en silencio.
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
   upload-api-service:
     build:
       # Contexto en la raíz: es un proyecto multi-módulo y el build
@@ -66,6 +92,8 @@ services:
         condition: service_healthy
       s3:
         condition: service_started
+      rabbitmq:
+        condition: service_healthy
     environment:
       # Adentro de la red de compose los servicios se alcanzan por su
       # nombre y por su puerto INTERNO. Acá va postgres:5432, no
@@ -75,6 +103,9 @@ services:
       SPRING_DATASOURCE_USERNAME: facturas
       SPRING_DATASOURCE_PASSWORD: facturas
       FACTURAS_STORAGE_ENDPOINT: http://s3:9090
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: facturas
+      SPRING_RABBITMQ_PASSWORD: facturas
     ports:
       - "8080:8080"
 
