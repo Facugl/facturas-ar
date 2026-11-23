@@ -16,14 +16,16 @@
 
 ## Estado actual
 
-**Fase 1, semanas 1-3 y el export de la 5.** El sistema ingesta un
-comprobante, le extrae los datos, y devuelve el período en un CSV que
-abre en Excel sin tocar nada. El lazo está cerrado de punta a punta.
+**Fase 1, semanas 1-3, el export de la 5 y el outbox de la Fase 2.** El
+sistema ingesta un comprobante, le extrae los datos, y devuelve el
+período en un CSV que abre en Excel sin tocar nada. El lazo está cerrado
+de punta a punta, y entre la subida y la extracción ya hay una fila
+durable en vez de una llamada directa.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación y **export CSV por rango de fechas**, stack dockerizado, 260 tests (12 contra Postgres real), CI |
-| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y toda la Fase 2 (cola, worker, Redis, outbox) |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, stack dockerizado, 290 tests (22 contra Postgres real), CI |
+| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend, autenticación, y el resto de la Fase 2 (RabbitMQ, worker separado, DLQ, Redis) |
 
 **La API hoy:** `POST /documents` · `GET /jobs/:id` ·
 `PUT /jobs/:id/confirm` · `GET /export/csv?from=&to=`
@@ -42,6 +44,14 @@ marca qué está hecho.
 > **Sin autenticación todavía.** Cada request se atribuye a un usuario de
 > desarrollo sembrado al arrancar, y la aplicación lo grita en el log.
 > Llega en la semana 4.
+
+> **El outbox está, el broker no.** El evento se escribe en la misma
+> transacción que el `Job` y un relay lo publica, pero el transporte es
+> todavía este mismo proceso. Eso arregló el *dual-write*, que es un
+> problema de correctitud; la espera del usuario es un problema de
+> latencia y es lo que arregla la cola. Ver
+> [sección 8](#publicación-transactional-outbox) y el
+> [ADR 005](docs/adr/005-transactional-outbox.md).
 
 ---
 
@@ -264,7 +274,7 @@ Los diagramas se generan con [Archify](https://github.com/tt-a1i/archify) a part
 
 **[Abrir diagrama interactivo](docs/diagrams/flujo-factura.html)** · fuente: [flujo-factura.sequence.json](docs/diagrams/flujo-factura.sequence.json)
 
-> **Fase 1 (sync):** el mismo flujo corre dentro del `upload-api-service`, sin RabbitMQ, Redis, outbox ni worker separado — la cascada de extracción se ejecuta en el request y el estado salta de `PENDING` a `EXTRACTED` en el mismo hilo. La Fase 2 solo mueve el pipeline detrás de la cola, sin cambiar el modelo de datos ni los estados del `Job`. Ver sección 10 (Roadmap).
+> **Hoy:** el mismo flujo corre dentro del `upload-api-service`, sin RabbitMQ, Redis ni worker separado — la cascada de extracción se ejecuta en el request y el estado salta de `PENDING` a `EXTRACTED` en el mismo hilo. **El outbox sí está**: entre la subida y la extracción hay una fila durable en `outbox_event` y un relay que la publica, con este proceso como transporte. Lo que falta mover detrás de la cola es el transporte, no el modelo de datos ni los estados del `Job`. Ver sección 11 (Roadmap).
 
 ### Regenerar los diagramas
 
@@ -442,15 +452,21 @@ INDEX (status) WHERE status IN ('PENDING','PROCESSING')   -- claim atómico
 
 ### `OutboxEvent`
 ```
-id (uuid)
-aggregate_id               -- el jobId
+id (uuid)                  -- es también el eventId que viaja en el mensaje
+aggregate_id               -- el jobId. Sin FK: el outbox no debe poder
+                           --   bloquear la escritura de lo que lo genera
 event_type                 -- "job.extraction.requested"
+event_version              -- viaja en la fila, no hardcodeado en el relay
 payload                    -- jsonb
-created_at
+created_at                 -- cuándo PASÓ el hecho, no cuándo se publicó
 published_at               -- nullable; null = pendiente de publicar
 ```
 
-> Se escribe en la **misma transacción** que el `Job`. Un relay la vacía contra RabbitMQ. Ver sección 8.
+> Se escribe en la **misma transacción** que el `Job`. Un relay la vacía contra el transporte. Ver [sección 8](#publicación-transactional-outbox).
+>
+> `id` es el `eventId` del mensaje, y eso es lo que hace **reconocible una reentrega**: se asigna una sola vez, al escribir la fila, y no cambia por más veces que el relay la publique. La diferencia entre `published_at` y `created_at` es la latencia que introduce el outbox — la métrica que dice si el relay está sano.
+>
+> El índice es **parcial** (`WHERE published_at IS NULL`). En una tabla que solo acumula, es la diferencia entre un índice que crece para siempre y uno que mide lo que queda sin publicar, o sea casi siempre vacío. Las filas publicadas se quedan como auditoría; la poda va con las métricas de la Fase 3, porque cuánto retener no se decide sin medir.
 
 ### `FieldCorrection` (1:N con Job)
 ```
@@ -711,10 +727,18 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 
 **En uso desde el export.** `ExportQueryTest` levanta un Postgres 16
 —la misma imagen del `docker-compose.yml`— corre las migraciones de
-Flyway y arranca la aplicación entera, controllers incluidos. Es el
-único test que lo hace, y existe porque la consulta del export decide
-qué filas entran a un archivo contable: eso lo resuelve SQL, no un mock.
-Las cinco pruebas de HTTP piden el CSV por el puerto real.
+Flyway y arranca la aplicación entera, controllers incluidos, porque la
+consulta del export decide qué filas entran a un archivo contable: eso
+lo resuelve SQL, no un mock. Las cinco pruebas de HTTP piden el CSV por
+el puerto real.
+
+`OutboxPostgresTest` es el segundo, y todo lo que prueba es algo que
+contra mocks no se puede probar, porque en los tres casos el que trabaja
+es Postgres: que el `Job` y su evento sean **una sola escritura** es una
+propiedad de la transacción; que dos relays simultáneos se **repartan**
+los eventos en vez de duplicarlos lo decide el lock, y hacen falta dos
+conexiones sosteniéndolo a la vez para verlo; y que un evento abandonado
+se publique **después** solo es cierto si la fila sobrevivió a un commit.
 
 Consecuencia práctica: **`./mvnw test` ahora necesita Docker corriendo.**
 El contenedor arranca una sola vez por JVM y Ryuk lo limpia al terminar.
@@ -844,8 +868,7 @@ Escrito por el Upload Service en la tabla `OutboxEvent`, en la misma transacció
     "jobId": "uuid",
     "documentId": "uuid",
     "storageKey": "documents/2026/10/uuid.pdf",
-    "mimeType": "application/pdf",
-    "sourceType": "PDF_SCANNED"
+    "mimeType": "application/pdf"
   }
 }
 ```
@@ -853,6 +876,14 @@ Escrito por el Upload Service en la tabla `OutboxEvent`, en la misma transacció
 - Payload liviano (solo `storageKey`, no el archivo ni datos parseados) — mantiene la cola rápida.
 - `eventId` + `eventVersion` desde el día 1: idempotencia, correlación de logs, evolución de schema sin romper compatibilidad entre despliegues no sincronizados.
 - Sin `userId`: el worker se mantiene "ciego" al concepto de usuario — separación de responsabilidades consciente.
+
+> **Este contrato llevaba un `sourceType` y se cayó al implementarlo.**
+> Distinguir `PDF_TEXT` de `PDF_SCANNED` exige abrir el archivo con
+> PDFBox, que es trabajo de la extracción y no de la subida — el mismo
+> motivo por el que la migración `V2` hizo nullable esa columna. En el
+> momento de escribir el evento el valor no existe, y mandar uno
+> adivinado sería peor que no mandar nada: el consumidor lo creería. El
+> campo salió del payload.
 
 ### Publicación: transactional outbox
 
@@ -866,19 +897,42 @@ La solución:
      INSERT OutboxEvent (published_at = null)
    COMMIT
 
-2. Relay (@Scheduled, cada pocos segundos, o listener del commit):
+2. Relay, en transacción propia:
      SELECT * FROM outbox_event WHERE published_at IS NULL
-     publicar a RabbitMQ
+       ORDER BY created_at LIMIT 100
+       FOR UPDATE SKIP LOCKED
+     publicar
      UPDATE published_at = now()
 ```
 
-- Si el broker está caído, el evento espera en la tabla y se publica cuando vuelve. Nada se pierde.
+- Si el transporte está caído, el evento espera en la tabla y se publica cuando vuelve. Nada se pierde.
 - Si el relay publica y muere antes del `UPDATE`, el evento se publica dos veces — **y eso está bien**, porque el consumidor ya es idempotente (ver más abajo). At-least-once de punta a punta.
 - El `Job` nunca existe sin su evento, ni el evento sin su `Job`.
 
+**Esto funciona hoy** (`GET /documents` → `outbox_event` → relay →
+extracción), con una diferencia: el transporte es todavía este mismo
+proceso. Tres decisiones que el ADR original no tenía y que aparecieron
+al construirlo:
+
+| Decisión | Por qué |
+|---|---|
+| **Dos disparadores** | El commit de la subida despierta al relay (camino normal: el evento sale en milisegundos) y un `@Scheduled` barre cada 5 s (recuperación: el proceso que murió justo después del commit, el transporte caído). Sin el barrido el outbox no tiene salida; sin el camino rápido cada subida espera al vacío |
+| **`FOR UPDATE SKIP LOCKED`** | Con dos disparadores hay dos relays que pueden correr a la vez. Sin el lock publicarían todo dos veces; con `FOR UPDATE` a secas el segundo esperaría al primero. `SKIP LOCKED` es lo que los hace repartir el trabajo — y lo que permite más de una réplica de la API sin tocar nada |
+| **`REQUIRES_NEW` en el relay** | El camino rápido corre en el callback *after-commit* de la subida, donde la transacción de la subida ya commiteó pero sigue siendo la actual. Una transacción `REQUIRED` se habría sumado a esa y los `UPDATE published_at` no habrían tenido efecto: sin error, y cada evento publicado de nuevo en el barrido siguiente |
+
+**Medido contra el stack real:** el camino rápido publicó en **22 ms**;
+un evento abandonado a mano lo levantó el barrido **2,1 s** después. Y
+al reentregarlo, el consumidor respondió `Job ... was not claimable;
+skipping` — el claim atómico absorbió el duplicado, que es el
+at-least-once demostrado y no solo afirmado.
+
 > **[ADR 005 — Transactional outbox](docs/adr/005-transactional-outbox.md).** Junto con el del QR, lo más sustancioso que el proyecto tiene para contar.
 >
-> **En Fase 1 no hace falta:** sin cola, no hay dual-write. Se introduce con la cola, en Fase 2.
+> **Lo que falta:** el broker. Y con él, el `ack`, la reentrega de un
+> mensaje sin confirmar y la DLQ — hoy un consumidor que explota se
+> lleva la transacción del relay. Un evento que no se pueda publicar
+> nunca bloquea su lote para siempre; eso se arregla con reintentos por
+> evento y dead-letter, en la semana 3 de la Fase 2.
 
 ### Respuesta del worker: sin evento de vuelta (Opción A — DB compartida)
 
@@ -993,17 +1047,27 @@ facturas-ar/
 │   ├── src/main/resources/db/migration/   # Flyway: Postgres es de las migraciones
 │   └── src/main/java/.../upload/
 │       ├── adapters/in/rest/       # Document, Job, Export + manejo de errores
+│       ├── adapters/in/messaging/  # ExtractionRequestListener: el consumidor.
+│       │                           #   En Fase 2 pasa a ser @RabbitListener
+│       │                           #   en el worker, y el cuerpo no cambia
 │       ├── adapters/out/persistence/   # repositorios Spring Data
 │       ├── adapters/out/storage/   # S3DocumentStorage
+│       ├── adapters/out/messaging/ # InProcessOutboxPublisher: el transporte
+│       │                           #   de la Fase 1, en lugar de RabbitTemplate
 │       ├── application/usecase/    # UploadComprobante, ExtractComprobante,
 │       │                           #   ExportComprobantes
+│       ├── application/outbox/     # Outbox (escribe), OutboxRelay (vacía),
+│       │                           #   OutboxPublisher (el puerto al transporte)
+│       ├── application/event/      # ComprobanteUploaded + DrainOutboxOnUpload
 │       ├── application/export/     # ComprobanteCsvWriter: las reglas Excel-AR
 │       ├── application/port/       # CurrentUser
 │       └── config/                 # almacenamiento S3, cascada, usuario de dev
 │
-├── shared-events/                  # RabbitMQ event DTOs — FASE 2
+├── shared-events/                  # contratos de los mensajes, cero dependencias
 │   └── src/main/java/.../events/
-│       └── JobExtractionRequestedEvent.java
+│       ├── DomainEvent.java        # un payload que sabe cómo se llama en el cable
+│       ├── JobExtractionRequested.java
+│       └── EventEnvelope.java      # lo que cruza el transporte
 │
 ├── ocr-worker-service/             # runnable Spring Boot app — FASE 2
 │   ├── Dockerfile                  # installs tesseract-ocr
@@ -1024,7 +1088,7 @@ facturas-ar/
 
 Notas clave:
 - `shared-domain` sin Spring Boot: compila más rápido, evita acoplar versiones de Spring entre servicios.
-- `shared-events` separado de `shared-domain`: los contratos de mensajería evolucionan con reglas de compatibilidad distintas a las entidades internas. **Se crea en la Fase 2**, junto con la cola: un módulo vacío durante seis semanas es ruido, no preparación.
+- `shared-events` separado de `shared-domain`: los contratos de mensajería evolucionan con reglas de compatibilidad distintas a las entidades internas. Una entidad se cambia y se redeploya en un paso; un mensaje no, porque mientras convivan dos versiones del productor y del consumidor el contrato tiene que ser compatible con las dos. **Nació con el outbox y no con la cola**, corrigiendo lo que decía esta línea: el outbox guarda el payload serializado, así que el contrato existe desde que existe la tabla.
 - `ocr-worker-service` necesita imagen Docker propia (más pesada, con Tesseract instalado) — no comparte base con `upload-api-service`.
 - `docs/adr/`: escribir a medida que se avanza, no al final (se pierde el razonamiento si se posterga).
 
@@ -1108,12 +1172,23 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 
 ### Fase 2 — RabbitMQ + Redis, separar worker (3-4 semanas)
 
-| Semana | Foco |
-|---|---|
-| 1 | Aprender RabbitMQ (exchange, queue, routing key, ack) |
-| 2 | Separar `ocr-worker-service`, contrato de evento + **transactional outbox** y su relay |
-| 3 | DLQ, reintentos, idempotencia del consumidor, invalidación de cache Redis |
-| 4 (buffer) | Testing de casos de falla con Testcontainers: matar el worker a mitad de un job, tirar abajo el broker con eventos pendientes en el outbox |
+| Semana | Foco | |
+|---|---|---|
+| 1 | ~~Aprender RabbitMQ~~ → **contrato de evento + transactional outbox y su relay** | ✅ |
+| 2 | RabbitMQ en el medio (exchange, queue, routing key, ack): el relay publica al broker y un `@RabbitListener` consume, todavía en el mismo servicio | ⬜ |
+| 3 | Separar `ocr-worker-service` · DLQ, reintentos, idempotencia del consumidor, invalidación de cache Redis | ⬜ |
+| 4 (buffer) | Testing de casos de falla con Testcontainers: matar el worker a mitad de un job, tirar abajo el broker con eventos pendientes en el outbox | ⬜ |
+
+> **Las semanas 1 y 2 se dieron vuelta, y vale decir por qué.** El plan
+> era una semana de aprender RabbitMQ antes de tocar código. El outbox
+> es un patrón de base de datos: lo único que necesita saber del broker
+> es que no comparte transacción con Postgres, y eso es una oración. Así
+> que entró primero, dejó una migración, una entidad, un relay y 30
+> tests, y RabbitMQ se aprende después con un problema concreto en la
+> mano — *tengo filas en una tabla que tienen que llegar a un consumidor* —
+> en vez de con vocabulario abstracto. En cada paso el sistema sigue
+> funcionando de punta a punta, que es mejor historia que una
+> reescritura asincrónica de una sola vez.
 
 ### Fase 3 — Observabilidad (1.5-2 semanas)
 
