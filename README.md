@@ -26,11 +26,13 @@ vuelve solo; y todo eso se mide en Prometheus.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, stack dockerizado, 332 tests (53 contra Postgres, RabbitMQ y Redis reales), CI |
-| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo, frontend y autenticación — es decir, **la semana 4 de la Fase 1 y la mitad de la 5** |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, **autenticación real con sesión en cookie y CSRF**, stack dockerizado, 340 tests (61 contra Postgres, RabbitMQ y Redis reales), CI |
+| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo y frontend — es decir, **lo que queda de la semana 4 de la Fase 1 y la mitad de la 5** |
 
-**La API hoy:** `POST /documents` · `GET /jobs/:id` ·
-`PUT /jobs/:id/confirm` · `GET /export/csv?from=&to=`
+**La API hoy:** `POST /auth/register` · `POST /auth/login` ·
+`POST /auth/logout` · `GET /auth/me` · `POST /documents` · `GET /jobs/:id` ·
+`PUT /jobs/:id/confirm` · `GET /export/csv?from=&to=`. Todo menos
+`register` y `login` necesita sesión.
 
 Lo que el resto de este documento describe es la **arquitectura final**,
 no el estado de avance. El roadmap de la [sección 11](#11-roadmap-y-estimación-de-tiempo)
@@ -43,9 +45,18 @@ marca qué está hecho.
 > en la [sección 6](#cobertura-medida-sobre-comprobantes-reales) y la
 > decisión en el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md).
 
-> **Sin autenticación todavía.** Cada request se atribuye a un usuario de
-> desarrollo sembrado al arrancar, y la aplicación lo grita en el log.
-> Llega en la semana 4.
+> **Autenticación real, con sesión del lado del servidor.** Email y
+> contraseña con BCrypt, la sesión en una cookie `HttpOnly` y el token de
+> CSRF manejado en vez de desactivado. No un JWT, y el motivo no es moda:
+> con sesión el logout corta el acceso en el instante, y la
+> statelessness del token no compra nada con un solo proceso de API. Ver
+> [ADR 015](docs/adr/015-sesion-con-cookie-y-no-un-token.md).
+>
+> Esto es lo que hizo testeable el **criterio de aceptación 7**. Antes
+> había un sustituto que atribuía todo request al mismo usuario sembrado:
+> las consultas filtraban por `user_id` desde el día 1, pero con un solo
+> usuario posible cualquier par de "usuarios" era el mismo usuario y el
+> filtro nunca se ejercitó.
 
 > **Son dos procesos.** `upload-api-service` atiende HTTP, publica y
 > recupera; `ocr-worker-service` consume la cola y corre la cascada. No
@@ -93,13 +104,41 @@ esperando a que cada uno esté sano. Después:
 
 ### Probarlo
 
+Primero hay que tener sesión. Son tres pasos y el primero sorprende: un
+`GET` público, que es lo que entrega la cookie de CSRF.
+
 ```bash
-curl -F "file=@factura.pdf;type=application/pdf" localhost:8080/documents
+# 1. Un GET cualquiera, solo para que el servidor mande XSRF-TOKEN.
+curl -sc cookies.txt localhost:8080/actuator/health > /dev/null
+CSRF=$(awk '/XSRF-TOKEN/ {print $7}' cookies.txt)
+
+AUTH=(-b cookies.txt -c cookies.txt -H "X-XSRF-TOKEN: $CSRF")
+JSON=(-H 'Content-Type: application/json')
+CRED='{"email":"yo@ejemplo.ar","password":"unaClaveLarga"}'
+
+# 2. Registrarse. No inicia sesión: son dos cosas, cada una con su paso.
+curl "${AUTH[@]}" "${JSON[@]}" -d "$CRED" localhost:8080/auth/register
+# 201 Created  (409 si el email ya está tomado)
+
+# 3. Iniciar sesión. Acá queda la cookie de sesión en cookies.txt.
+curl "${AUTH[@]}" "${JSON[@]}" -d "$CRED" localhost:8080/auth/login
+# 200 OK  {"id":"7da6effe-...","email":"yo@ejemplo.ar"}
+```
+
+Sin el `X-XSRF-TOKEN` el `POST` responde **403**, incluso con sesión
+válida: estar logueado es justo la situación de la que depende un ataque
+CSRF. Y un `GET` a un endpoint protegido sin sesión responde **401**.
+
+Ya con sesión:
+
+```bash
+curl "${AUTH[@]}" -F "file=@factura.pdf;type=application/pdf" \
+     localhost:8080/documents
 # 202 Accepted  {"jobId":"863f24b4-...","status":"PENDING","duplicate":false}
 
 # La extracción corre del otro lado de la cola, así que el POST vuelve
 # antes de que termine. Un GET inmediato muestra PENDING o PROCESSING:
-curl localhost:8080/jobs/863f24b4-...
+curl -b cookies.txt localhost:8080/jobs/863f24b4-...
 ```
 
 ```json
@@ -131,11 +170,11 @@ explicadas en el [ADR 008](docs/adr/008-deduplicacion-en-tres-capas.md).
 Confirmado el comprobante, entra al historial exportable:
 
 ```bash
-curl -X PUT localhost:8080/jobs/863f24b4-.../confirm
+curl "${AUTH[@]}" -X PUT localhost:8080/jobs/863f24b4-.../confirm
 # 200 OK, el job queda en CONFIRMED
 # 409 si todavía no terminó de extraerse: el pedido está bien, el job no está listo
 
-curl -OJ "localhost:8080/export/csv?from=2026-03-01&to=2026-03-31"
+curl -b cookies.txt -OJ "localhost:8080/export/csv?from=2026-03-01&to=2026-03-31"
 # comprobantes-2026-03-01-a-2026-03-31.csv
 ```
 
@@ -220,6 +259,16 @@ El orden técnico del roadmap (sync → cola/Redis → observabilidad → pulido
 ### Decisión de auth
 **Auth simple (email/password, sin roles ni RBAC)** + historial + export por rango de fechas. El RBAC ya está demostrado en otro proyecto del portfolio, no hace falta repetir profundidad ahí.
 
+Decidido el alcance, lo único que quedaba era **cómo viaja la
+credencial**: sesión del lado del servidor en una cookie `HttpOnly`, no un
+JWT. Con sesión el logout corta el acceso en el instante en que se pide,
+la cookie es inalcanzable desde JavaScript, y no hay biblioteca ni
+secreto de firma que mantener. Lo que el token vende —no compartir
+estado— no compra nada con un solo proceso de API, y el día que haya
+varios, Spring Session sobre Redis es una dependencia que este stack ya
+tiene. El costo es CSRF, que se maneja y no se apaga. Ver
+[ADR 015](docs/adr/015-sesion-con-cookie-y-no-un-token.md).
+
 ### Incluido en v1
 
 | Área | Alcance |
@@ -251,7 +300,7 @@ El orden técnico del roadmap (sync → cola/Redis → observabilidad → pulido
 4. Usuario puede corregir cualquier campo y confirmar; cada corrección queda registrada.
 5. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción. Un archivo ilegible o que no es una factura **no es un fallo del sistema**: el formulario sale vacío y el documento queda guardado igual.
 6. Export CSV de un rango de fechas que abre en Excel y Sheets con montos como números y acentos correctos, **sin intervención manual**. *(✅ **Cumplido en los dos**, verificado abriendo el archivo. La vuelta por Excel encontró algo que ningún test podía: el CAE salía como `7,04171E+13`.)*
-7. Un usuario no puede acceder a datos de otro — con test automatizado que lo demuestre.
+7. Un usuario no puede acceder a datos de otro — con test automatizado que lo demuestre. *(✅ **Cumplido.** El test registra dos usuarios por HTTP, cada uno con su sesión; uno sube un comprobante y el otro pide ese job y recibe **404**, no 403 — un 403 confirmaría que existe. No se podía testear antes: el sustituto de autenticación atribuía todo request al mismo usuario. Ver [`AuthPostgresTest`](upload-api-service/src/test/java/ar/facturas/upload/adapters/in/rest/AuthPostgresTest.java).)*
 8. El sistema sobrevive a que el worker se caiga a mitad de un procesamiento: el mensaje se reprocesa y el resultado no se duplica. *(✅ **Cumplido.** "No se duplica" lo da el claim atómico desde la Fase 1: una reentrega encuentra el job no tomable y no hace nada. "Se reprocesa" faltaba hasta el reaper — un worker que moría entre el claim y el ack dejaba el job en `PROCESSING`, que no es un estado procesable, así que nadie lo levantaba nunca. Ver [sección 8](#el-reaper-los-jobs-que-ninguna-cola-va-a-mover).)*
 9. Siempre hay feedback visible de estado ("procesando"), aunque la Fase 1 sea síncrona.
 
@@ -774,8 +823,10 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 —la misma imagen del `docker-compose.yml`— corre las migraciones de
 Flyway y arranca la aplicación entera, controllers incluidos, porque la
 consulta del export decide qué filas entran a un archivo contable: eso
-lo resuelve SQL, no un mock. Las cinco pruebas de HTTP piden el CSV por
-el puerto real.
+lo resuelve SQL, no un mock. Las pruebas de HTTP piden el CSV por el
+puerto real — y desde que hay autenticación **se registran e inician
+sesión primero**, igual que un cliente, que es lo que hace honesto el
+nombre de la clase: *through the whole application*.
 
 `OutboxPostgresTest` es el segundo, y todo lo que prueba es algo que
 contra mocks no se puede probar, porque en los tres casos el que trabaja
@@ -804,6 +855,16 @@ bindeada al mismo exchange y routing key: un exchange topic entrega a
 todos los bindings que matchean, así que el test mira sin interferir —
 la otra opción era parar el listener, y un test que lo deja parado
 cuando falla rompe los que vienen después.
+
+`AuthPostgresTest` es el último, y es el que no se puede bajar de HTTP sin
+perderlo todo: la sesión vive en una cookie, el token de CSRF en otra
+cookie más un header, y la cadena de filtros es lo que los conecta — un
+test que llamara al controller directamente estaría afirmando algo sobre
+una llamada a método y pasaría con toda la cadena mal configurada. No es
+hipotético: así se colaron dos bugs reales, y los encontró este test al
+pasar por el puerto ([ADR 015](docs/adr/015-sesion-con-cookie-y-no-un-token.md)).
+Acá vive el **criterio de aceptación 7**: dos usuarios registrados de
+verdad, cada uno con su sesión, y uno pidiendo el job del otro.
 
 Consecuencia práctica: **`./mvnw test` necesita Docker corriendo.** Los
 tres contenedores —Postgres, RabbitMQ y Redis— arrancan una sola vez por
@@ -1388,7 +1449,8 @@ facturas-ar/
 │   ├── Dockerfile
 │   ├── src/main/resources/db/migration/   # Flyway: Postgres es de las migraciones
 │   └── src/main/java/.../upload/
-│       ├── adapters/in/rest/       # Document, Job, Export + manejo de errores
+│       ├── adapters/in/rest/       # Auth, Document, Job, Export +
+│       │                           #   manejo de errores
 │       ├── adapters/in/messaging/  # DeadLetterListener: rastrea el job por
 │       │                           #   el message-id y lo vuelve a pedir
 │       ├── adapters/out/messaging/ # RabbitOutboxPublisher: espera la
@@ -1402,7 +1464,10 @@ facturas-ar/
 │       ├── application/metrics/    # PipelineMetrics: los nombres, en un solo lugar
 │       ├── application/export/     # ComprobanteCsvWriter: las reglas Excel-AR
 │       ├── application/port/       # CurrentUser
-│       └── config/                 # S3, cascada, usuario de dev, RabbitTopology
+│       ├── config/security/         # SecurityConfig, AuthenticatedUser,
+│       │                           #   DatabaseUserDetailsService,
+│       │                           #   SecurityCurrentUser
+│       └── config/                 # S3, cascada, RabbitTopology
 │
 ├── shared-events/                  # contratos de los mensajes, cero dependencias
 │   │                               #   (ni Jackson: ver ADR 011)
@@ -1507,7 +1572,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | ✅ 1 | Setup monorepo, entidades JPA + Flyway, `shared-domain` con los value objects (`Cuit` con dígito verificador, `Importe`) |
 | ✅ 2 | Upload endpoint + almacenamiento S3, **estrategia QR** (ZXing; el motor de OpenCV se agregó después de medir, [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)) |
 | ✅ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo de la **razón social**. Neto e IVA quedan afuera: son v2, por la decisión de perfil de usuario |
-| ⬜ 4 | Frontend mínimo: upload + **detección del QR en vivo con la cámara** + formulario con origen por campo + historial, auth básica |
+| 🔶 4 | ✅ **Auth real** (sesión en cookie, BCrypt, CSRF) — se adelantó al frontend porque es backend y porque desbloquea el criterio 7. ⬜ Frontend mínimo: upload + **detección del QR en vivo con la cámara** + formulario con origen por campo + historial |
 | 🔶 5 | ✅ Export CSV con formato Excel-AR y `PUT /jobs/:id/confirm`, que es la puerta al historial exportable. ⬜ Tess4J + OpenCV para comprobantes **sin** QR |
 | ⬜ 6 (buffer) | Timebox de medio día al decodificado por mosaicos en el servidor, pulido |
 
@@ -1601,10 +1666,12 @@ Pulido de UX/responsive, screenshots/demo para el portfolio, README con diagrama
 >
 > El costo de ese orden es concreto y conviene tenerlo a la vista:
 > `FieldCorrection` sigue con **cero filas** —una apuesta de diseño del
-> día 1 que todavía no produjo nada, porque necesita el formulario—, no
-> hay autenticación, y todo lo construido se demuestra con `curl`,
-> `psql` y PromQL en vez de con una pantalla. Lo que desbloquea las tres
-> de una vez es la semana 4.
+> día 1 que todavía no produjo nada, porque necesita el formulario— y
+> todo lo construido se demuestra con `curl`, `psql` y PromQL en vez de
+> con una pantalla. De las tres cosas que faltaban acá, la autenticación
+> ya está: se partió la semana 4 y se hizo primero la mitad que es
+> backend ([ADR 015](docs/adr/015-sesion-con-cookie-y-no-un-token.md)).
+> Las otras dos las desbloquea el formulario.
 
 ---
 

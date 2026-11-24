@@ -24,6 +24,7 @@ pierde rápido, y es lo único que sirve cuando hay que revisarla.
 | [012](012-una-extraccion-fallida-se-ackea.md) | **Una extracción fallida se ackea; la DLQ es para lo que no se puede procesar** | Aceptada · implementada |
 | [013](013-los-repositorios-son-compartidos.md) | La base, el bucket y la topología del broker son compartidos, no duplicados | Aceptada · implementada |
 | [014](014-el-cache-se-invalida-y-la-clave-lleva-el-dueno.md) | **El cache se invalida, no se actualiza; y la clave lleva el dueño** | Aceptada · implementada |
+| [015](015-sesion-con-cookie-y-no-un-token.md) | **Sesión con cookie, y no un token** | Aceptada · implementada |
 
 Hay una cadena de correcciones acá, y vale leerla en orden. El
 [009](009-deteccion-del-qr-en-el-cliente.md) revisa al

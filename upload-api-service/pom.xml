@@ -45,6 +45,14 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-validation</artifactId>
     </dependency>
+    <!-- Auth simple: email/password, sin roles ni RBAC (seccion 3 del
+         README). Solo en este modulo: el worker no atiende requests de
+         nadie, y ponerle seguridad solo le cerraria el endpoint que
+         Prometheus scrapea. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>

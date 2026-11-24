@@ -668,6 +668,7 @@ Escritos. Ver [docs/adr/](adr/):
 | [012](adr/012-una-extraccion-fallida-se-ackea.md) | Por qué una extracción fallida se ackea, y qué significa entonces la dead-letter queue |
 | [013](adr/013-los-repositorios-son-compartidos.md) | Qué comparten los dos servicios, y por qué la topología del broker la declaran los dos pero el esquema lo migra uno |
 | [014](adr/014-el-cache-se-invalida-y-la-clave-lleva-el-dueno.md) | Por qué el cache se borra en vez de reescribirse, y por qué la clave lleva el usuario |
+| [015](adr/015-sesion-con-cookie-y-no-un-token.md) | Por qué la sesión va en una cookie y no en un JWT — y las dos cosas que hicieron que un endpoint público contestara 401 |
 
 ---
 

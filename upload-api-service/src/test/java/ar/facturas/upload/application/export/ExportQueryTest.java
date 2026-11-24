@@ -11,7 +11,7 @@ import ar.facturas.infrastructure.persistence.ExtractedInvoiceDataRepository;
 import ar.facturas.infrastructure.persistence.JobRepository;
 import ar.facturas.infrastructure.persistence.UserRepository;
 import ar.facturas.upload.ContainersTest;
-import ar.facturas.upload.application.port.CurrentUser;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -22,6 +22,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.math.BigDecimal;
 import java.net.URI;
+import java.net.CookieManager;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -71,7 +72,6 @@ class ExportQueryTest extends ContainersTest {
     @Autowired DocumentRepository documents;
     @Autowired JobRepository jobs;
     @Autowired ExtractedInvoiceDataRepository comprobantes;
-    @Autowired CurrentUser currentUser;
     @Autowired Environment environment;
 
     // ── Fixtures ──────────────────────────────────────────────────────
@@ -245,24 +245,114 @@ class ExportQueryTest extends ContainersTest {
     @DisplayName("over HTTP, through the whole application")
     class OverHttp {
 
-        private HttpResponse<byte[]> get(String from, String to) throws Exception {
-            String port = environment.getProperty("local.server.port");
-            return HttpClient.newHttpClient().send(
+        /**
+         * The export without a session answers 401 and not an empty CSV.
+         *
+         * <p>Worth its own test because the failure it guards against is
+         * silent: an endpoint missing from the authenticated matcher
+         * would still work, and would hand whoever asked a file built
+         * from no user's data.
+         */
+        @Test
+        @DisplayName("sin sesion el export responde 401, no un CSV vacio")
+        void refusesAnExportWithoutASession() throws Exception {
+            HttpResponse<byte[]> response = HttpClient.newHttpClient().send(
                     HttpRequest.newBuilder(URI.create(
-                            "http://localhost:" + port + "/export/csv?from=" + from + "&to=" + to))
-                            .GET().build(),
+                            "http://localhost:" + environment.getProperty("local.server.port")
+                            + "/export/csv?from=2031-04-01&to=2031-04-30")).GET().build(),
                     HttpResponse.BodyHandlers.ofByteArray());
+
+            assertThat(response.statusCode()).isEqualTo(401);
         }
 
         /**
-         * A year of its own, because these run against the seeded dev
-         * user — the one the stand-in for authentication attributes every
-         * request to — and share a database with the tests above.
+         * One client for the whole nested class, carrying the cookies.
+         *
+         * <p>{@code CookieManager} is what makes this a session: the
+         * login response sets {@code JSESSIONID} and {@code XSRF-TOKEN},
+         * and every later request sends them back without the test
+         * managing anything.
+         *
+         * <p>It also means this class exercises the CSRF handshake a real
+         * browser does, which is how two bugs in {@code SecurityConfig}
+         * turned up: the server never issued the {@code XSRF-TOKEN}
+         * cookie, and the resulting 403 reached the client as a 401
+         * because the forward to {@code /error} needed a session.
+         */
+        private final HttpClient client = HttpClient.newBuilder()
+                .cookieHandler(new CookieManager())
+                .build();
+
+        private UUID userId;
+
+        /**
+         * Registers and signs in, for real, over HTTP.
+         *
+         * <p>These tests used to run as the seeded dev user that the
+         * stand-in for authentication attributed every request to. There
+         * is no such user any more, so they do what a client does — and
+         * that is an improvement: this class is the one that claims to go
+         * "through the whole application", and the whole application now
+         * includes being signed in.
+         */
+        @BeforeEach
+        void signIn() throws Exception {
+            String email = UUID.randomUUID() + "@test.ar";
+            String body = "{\"email\":\"" + email + "\",\"password\":\"unaClaveLarga\"}";
+
+            // A public GET first, only to be handed the CSRF cookie:
+            // /auth/login is a POST, and CSRF applies to every
+            // state-changing request whether or not it needs a session.
+            send(HttpRequest.newBuilder(uri("/actuator/health")).GET());
+
+            assertThat(send(post("/auth/register", body)).statusCode()).isEqualTo(201);
+
+            HttpResponse<byte[]> login = send(post("/auth/login", body));
+            assertThat(login.statusCode()).isEqualTo(200);
+            userId = UUID.fromString(new String(login.body(), StandardCharsets.UTF_8)
+                    .replaceAll(".*\"id\"\\s*:\\s*\"([^\"]+)\".*", "$1"));
+        }
+
+        private URI uri(String path) {
+            return URI.create("http://localhost:"
+                              + environment.getProperty("local.server.port") + path);
+        }
+
+        private HttpRequest.Builder post(String path, String json) {
+            return HttpRequest.newBuilder(uri(path))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(json));
+        }
+
+        /** Echoes the CSRF cookie back in the header Spring Security reads. */
+        private HttpResponse<byte[]> send(HttpRequest.Builder request) throws Exception {
+            csrfToken().ifPresent(token -> request.header("X-XSRF-TOKEN", token));
+            return client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+        }
+
+        private java.util.Optional<String> csrfToken() {
+            return client.cookieHandler()
+                    .map(CookieManager.class::cast)
+                    .flatMap(manager -> manager.getCookieStore().getCookies().stream()
+                            .filter(c -> "XSRF-TOKEN".equals(c.getName()))
+                            .map(java.net.HttpCookie::getValue)
+                            .findFirst());
+        }
+
+        private HttpResponse<byte[]> get(String from, String to) throws Exception {
+            return send(HttpRequest.newBuilder(
+                    uri("/export/csv?from=" + from + "&to=" + to)).GET());
+        }
+
+        /**
+         * A year of its own: each run registers a fresh user, but the
+         * database is shared with the tests above and a year nobody else
+         * uses keeps the assertions about this period alone.
          */
         @Test
         @DisplayName("a confirmed comprobante comes back as a CSV Excel can open")
         void servesTheComprobantesOfThePeriod() throws Exception {
-            long number = confirmed(currentUser.id(), LocalDate.of(2031, 4, 12));
+            long number = confirmed(userId, LocalDate.of(2031, 4, 12));
 
             HttpResponse<byte[]> response = get("2031-04-01", "2031-04-30");
             String csv = new String(response.body(), StandardCharsets.UTF_8);

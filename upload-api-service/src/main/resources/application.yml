@@ -73,6 +73,23 @@ spring:
 server:
   port: 8080
 
+  servlet:
+    session:
+      cookie:
+        # HttpOnly: inalcanzable desde JavaScript, asi que un agujero de
+        # XSS no puede robarse la credencial. Es la mitad del argumento
+        # por el que esto es una cookie y no un token (ADR 015).
+        http-only: true
+        # Lax y no Strict: Strict rompe el caso de llegar al sitio desde
+        # un link externo ya logueado, y la proteccion real contra CSRF
+        # es el token, no el SameSite.
+        same-site: lax
+        # secure se activa detras de HTTPS. En desarrollo el stack es
+        # http://localhost y ponerlo en true haria que el navegador
+        # descarte la cookie sin decir por que.
+        secure: false
+      timeout: 7d
+
 # Configuración propia del proyecto
 facturas:
   cache:
@@ -175,7 +192,13 @@ management:
         include: health,info,metrics,prometheus
   endpoint:
     health:
-      show-details: always
+      # `when-authorized`, no `always`. /actuator/health es publico —
+      # Docker lo necesita para su healthcheck y no puede loguearse — asi
+      # que con `always` una request anonima se llevaba el motor de la
+      # base, la query de validacion y el espacio libre en disco. Sin
+      # sesion ahora devuelve {"status":"UP"}, que es todo lo que el
+      # contenedor necesita.
+      show-details: when-authorized
 
 logging:
   # El contexto (MDC) entra en el JSON. Es lo que hace que los logs
