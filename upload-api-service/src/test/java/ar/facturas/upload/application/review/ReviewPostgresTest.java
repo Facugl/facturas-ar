@@ -7,6 +7,7 @@ import ar.facturas.domain.model.ExtractedInvoiceData;
 import ar.facturas.domain.model.FieldCorrection;
 import ar.facturas.domain.model.Job;
 import ar.facturas.domain.model.User;
+import ar.facturas.domain.port.DocumentStorage;
 import ar.facturas.domain.vo.Cuit;
 import ar.facturas.infrastructure.cache.JobCache;
 import ar.facturas.infrastructure.persistence.DocumentRepository;
@@ -69,6 +70,19 @@ class ReviewPostgresTest extends ContainersTest {
     private static final AtomicLong SEQUENCE = new AtomicLong(80_000);
 
     @MockitoBean CurrentUser currentUser;
+
+    /**
+     * Never used by these tests, and mocked anyway — because
+     * {@code S3DocumentStorage} checks the bucket in a {@code @PostConstruct}
+     * and the whole context fails to load without something answering on
+     * port 9090.
+     *
+     * <p>Left out at first, and the suite passed: this machine had the
+     * compose stack up. CI does not, so CI is where it broke. That is the
+     * green-locally-red-in-CI shape, and the lesson is that a test which
+     * depends on what happens to be running is not a test.
+     */
+    @MockitoBean DocumentStorage storage;
 
     @Autowired JobController jobs;
     @Autowired JobRepository jobRepository;
