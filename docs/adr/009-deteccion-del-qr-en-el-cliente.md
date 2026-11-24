@@ -1,9 +1,10 @@
 # 009 — El QR se detecta en el cliente, no en el servidor
 
-**Estado:** premisa refutada · la decisión sobrevive con otro peso
+**Estado:** premisa refutada · la decisión sobrevive con otro peso · implementada
 **Fecha:** 2026-11-01
 **Revisa:** [ADR 004](004-qr-primero-ocr-de-respaldo.md)
 **Revisada por:** [ADR 010](010-dos-motores-para-leer-el-qr.md)
+**Implementada en:** [ADR 017](017-el-frontend-va-en-el-mismo-origen.md), que decide que la cámara exige el QR y el selector de archivos no
 
 > **Leer esto antes que el resto.** Todo lo que sigue se midió con un
 > solo decodificador, ZXing, y de ahí concluyó que al servidor no le

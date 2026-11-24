@@ -18,7 +18,7 @@ pierde rápido, y es lo único que sirve cuando hay que revisarla.
 | [006](006-dos-servicios-una-base.md) | **Dos servicios sobre una base: por qué no son microservicios** | Aceptada · implementada |
 | [007](007-claim-atomico.md) | Claim atómico y una sola puerta de reproceso | Aceptada · implementada |
 | [008](008-deduplicacion-en-tres-capas.md) | Deduplicación en tres capas | Aceptada · implementada |
-| [009](009-deteccion-del-qr-en-el-cliente.md) | El QR se detecta en el cliente, no en el servidor | Premisa refutada · pendiente (semana 4) |
+| [009](009-deteccion-del-qr-en-el-cliente.md) | El QR se detecta en el cliente, no en el servidor | Premisa refutada · implementada |
 | [010](010-dos-motores-para-leer-el-qr.md) | **Dos motores para leer el QR, y OpenCV para las fotos** | Aceptada · implementada |
 | [011](011-el-envelope-viaja-en-las-propiedades-de-amqp.md) | El envelope viaja en las propiedades de AMQP, no dentro del body | Aceptada · implementada |
 | [012](012-una-extraccion-fallida-se-ackea.md) | **Una extracción fallida se ackea; la DLQ es para lo que no se puede procesar** | Aceptada · implementada |
@@ -26,6 +26,7 @@ pierde rápido, y es lo único que sirve cuando hay que revisarla.
 | [014](014-el-cache-se-invalida-y-la-clave-lleva-el-dueno.md) | **El cache se invalida, no se actualiza; y la clave lleva el dueño** | Aceptada · implementada |
 | [015](015-sesion-con-cookie-y-no-un-token.md) | **Sesión con cookie, y no un token** | Aceptada · implementada |
 | [016](016-el-servidor-calcula-el-diff-de-la-revision.md) | **El servidor calcula el diff de la revisión** | Aceptada · implementada |
+| [017](017-el-frontend-va-en-el-mismo-origen.md) | **El frontend va en el mismo origen que la API** | Aceptada · implementada |
 
 Hay una cadena de correcciones acá, y vale leerla en orden. El
 [009](009-deteccion-del-qr-en-el-cliente.md) revisa al

@@ -2,12 +2,16 @@ package ar.facturas.infrastructure.persistence;
 
 import ar.facturas.domain.enums.JobStatus;
 import ar.facturas.domain.model.Job;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -111,4 +115,94 @@ public interface JobRepository extends JpaRepository<Job, UUID> {
     List<Job> findByDocument_User_IdAndStatusOrderByCreatedAtDesc(UUID userId, JobStatus status);
 
     long countByDocument_User_IdAndStatus(UUID userId, JobStatus status);
+
+    /**
+     * The history screen: what this user has loaded, newest first.
+     *
+     * <h2>By upload date, and not by issue date</h2>
+     *
+     * <p>The export filters by <em>issue</em> date, because a comprobante
+     * from March belongs to March whenever it was loaded, and an
+     * accounting file may not get that wrong. A history is the opposite
+     * question — <em>what have I loaded</em> — and filtering it by issue
+     * date would hide exactly the rows somebody opens a history to find:
+     * the ones that failed, and the ones where the QR never decoded and
+     * so have no issue date at all. Two date filters that mean two
+     * different things, labelled as such in the UI.
+     *
+     * <p>Served by {@code ix_documents_user_uploaded}, which has been in
+     * the schema since the first migration for a query that did not exist
+     * until now.
+     *
+     * <h2>One row per document, not per job</h2>
+     *
+     * <p>A document has many jobs — that is what makes reprocessing
+     * possible without a re-upload — so without the subquery a
+     * comprobante that went through the reaper would appear twice in the
+     * list, which reads as "it got uploaded twice" and is a bug the user
+     * can see. The subquery keeps the latest job of each document, which
+     * is the same definition of "the" job that
+     * {@link #findFirstByDocument_IdOrderByCreatedAtDesc} uses.
+     *
+     * <h2>A projection, not entities</h2>
+     *
+     * <p>The list needs nine columns and no behaviour. Loading {@code Job}
+     * entities would pull the document, the user and — lazily, one query
+     * per row — the extracted data, to render a summary. The
+     * {@code LEFT JOIN} is what makes the extracted side optional: a job
+     * that failed, or one in {@code DUPLICATE}, has no row there and still
+     * belongs in the history.
+     */
+    @Query("""
+            SELECT j.id                    AS jobId,
+                   j.status                AS status,
+                   d.originalFilename      AS originalFilename,
+                   d.uploadedAt            AS uploadedAt,
+                   d.qrDetected            AS qrDetected,
+                   e.issueDate             AS issueDate,
+                   e.total                 AS total,
+                   e.invoiceTypeCode       AS invoiceTypeCode,
+                   e.issuerBusinessName    AS issuerBusinessName
+              FROM Job j
+              JOIN j.document d
+              LEFT JOIN ExtractedInvoiceData e ON e.jobId = j.id
+             WHERE d.user.id = :userId
+               AND d.uploadedAt >= :from
+               AND d.uploadedAt < :to
+               AND j.createdAt = (SELECT MAX(latest.createdAt) FROM Job latest
+                                   WHERE latest.document = d)
+             ORDER BY d.uploadedAt DESC, j.id
+            """)
+    Page<JobHistoryRow> findHistory(@Param("userId") UUID userId,
+                                    @Param("from") Instant from,
+                                    @Param("to") Instant to,
+                                    Pageable pageable);
+
+    /**
+     * One row of the history.
+     *
+     * <p>An interface projection: Spring Data builds it from the aliases
+     * in the query above, so a renamed alias is a method that stops being
+     * populated. Every field is nullable except the first four — a
+     * comprobante whose QR did not decode has nothing else.
+     */
+    interface JobHistoryRow {
+        UUID getJobId();
+
+        JobStatus getStatus();
+
+        String getOriginalFilename();
+
+        Instant getUploadedAt();
+
+        Boolean getQrDetected();
+
+        LocalDate getIssueDate();
+
+        BigDecimal getTotal();
+
+        Integer getInvoiceTypeCode();
+
+        String getIssuerBusinessName();
+    }
 }

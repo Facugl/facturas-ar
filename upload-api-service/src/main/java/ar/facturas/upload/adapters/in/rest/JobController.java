@@ -10,6 +10,7 @@ import ar.facturas.infrastructure.cache.JobCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
@@ -17,9 +18,13 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -28,6 +33,9 @@ import java.util.UUID;
 @RequestMapping("/jobs")
 @Slf4j
 public class JobController {
+
+    /** A page bigger than this is a timeout waiting to happen. */
+    private static final int MAX_PAGE_SIZE = 100;
 
     private final JobRepository jobs;
     private final ExtractedInvoiceDataRepository extractedData;
@@ -57,6 +65,59 @@ public class JobController {
         // meant to save.
         this.tx = new TransactionTemplate(transactionManager);
         this.tx.setReadOnly(true);
+    }
+
+    /**
+     * The history: what this user has loaded, newest first.
+     *
+     * <h2>Two date filters that mean different things</h2>
+     *
+     * <p>This one is the <strong>upload</strong> date. The export's is the
+     * <strong>issue</strong> date, because a comprobante from March
+     * belongs to March whenever it was loaded and an accounting file may
+     * not get that wrong. Filtering a history the same way would hide
+     * exactly what somebody opens a history to find: the jobs that
+     * failed, and the ones whose QR never decoded, which have no issue
+     * date at all.
+     *
+     * <p>They are different questions, so the UI labels them differently
+     * rather than pretending one range serves both.
+     *
+     * <h2>Not cached</h2>
+     *
+     * <p>{@code GET /jobs/\{id\}} is cached in Redis because the frontend
+     * polls one job every second or two while it processes. This is the
+     * opposite kind of read: opened occasionally, and over a list whose
+     * contents change on every upload and every confirmation. Caching it
+     * would mean invalidating on both, keyed per user and per page, to
+     * save a query nobody is making in a loop.
+     *
+     * @param from  inclusive, defaults to everything
+     * @param to    inclusive of the whole day, defaults to today
+     * @param page  zero-based
+     * @param size  capped, because a client asking for fifty thousand
+     *              rows is a client that will time out and retry
+     */
+    @GetMapping
+    public HistoryResponse history(
+            @RequestParam(required = false) LocalDate from,
+            @RequestParam(required = false) LocalDate to,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+
+        // The end of `to` and not its start: a range of one day has to
+        // include the comprobantes loaded that day, and uploadedAt is an
+        // instant. Compared with `<` against the next midnight, which is
+        // the version of this that does not depend on clock precision.
+        Instant until = (to == null ? LocalDate.now() : to)
+                .plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant since = from == null
+                ? Instant.EPOCH
+                : from.atStartOfDay(ZoneOffset.UTC).toInstant();
+
+        return HistoryResponse.from(jobs.findHistory(
+                currentUser.id(), since, until,
+                PageRequest.of(Math.max(page, 0), Math.clamp(size, 1, MAX_PAGE_SIZE))));
     }
 
     /**

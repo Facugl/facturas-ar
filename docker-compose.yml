@@ -242,6 +242,34 @@ services:
       retries: 10
       start_period: 30s
 
+  # La pantalla, y el proxy que hace que la API este en el mismo origen.
+  #
+  # Lo segundo es lo que importa y no es un detalle de deploy: la cookie
+  # de sesion es HttpOnly y SameSite=Lax (ADR 015), y un navegador no
+  # manda una cookie Lax entre origenes distintos. La unica forma de
+  # evitarlo seria SameSite=None; Secure, que necesita HTTPS y entonces
+  # no funciona en http://localhost. Las alternativas eran debilitar la
+  # cookie o cambiar a un token y deshacer el ADR 015 para acomodar al
+  # deploy; proxyear cuesta unas lineas de nginx.conf.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: facturas-frontend
+    depends_on:
+      upload-api-service:
+        condition: service_healthy
+    ports:
+      # El 8081 y no el 80: el 80 suele estar ocupado, y pedir permisos de
+      # administrador para ver una pantalla de prueba no vale la pena.
+      - "8081:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/index.html || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
 volumes:
   postgres-data:
   prometheus-data:

@@ -47,12 +47,46 @@ jobs:
           path: '**/target/surefire-reports/**'
           retention-days: 7
 
+  frontend:
+    name: Compilar y testear el frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          # Cachea ~/.npm usando el lockfile como clave.
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # `ci` y no `install`: instala exactamente lo que dice el lockfile,
+      # así CI prueba las versiones que se probaron y no las que el
+      # registry ofrezca hoy.
+      - name: Instalar
+        working-directory: frontend
+        run: npm ci
+
+      - name: Tests
+        working-directory: frontend
+        run: npm test
+
+      # `tsc -b && vite build`: el type check es parte del build a
+      # propósito. Es lo único que cubre los componentes que no tienen
+      # test, y es lo que se rompe cuando la API cambia un campo y el
+      # frontend sigue leyéndolo.
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
   docker:
     name: Construir la imagen
     runs-on: ubuntu-latest
     # Solo después de que los tests pasen: una imagen de código roto no
     # le sirve a nadie.
-    needs: build
+    needs: [build, frontend]
 
     steps:
       - uses: actions/checkout@v4
@@ -88,3 +122,15 @@ jobs:
           push: false
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=max,scope=worker
+
+      # La tercera, y el contexto es ./frontend y no la raíz: esta imagen
+      # no necesita el pom padre ni los módulos hermanos, solo el
+      # package-lock y el src.
+      - name: Construir el frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: frontend/Dockerfile
+          push: false
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend

@@ -26,14 +26,20 @@ vuelve solo; y todo eso se mide en Prometheus.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, **autenticación real con sesión en cookie y CSRF**, **revisión con correcciones por campo auditadas**, stack dockerizado, 391 tests (74 contra Postgres, RabbitMQ y Redis reales), CI |
-| ⬜ **Falta** | El formulario de revisión en pantalla (la API que lo sostiene ya está), detección del QR en el cliente, OCR de respaldo y frontend — es decir, **lo que queda de la semana 4 de la Fase 1 y la mitad de la 5** |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, **autenticación real con sesión en cookie y CSRF**, **revisión con correcciones por campo auditadas**, **frontend React con cámara que lee el QR en vivo, formulario de revisión, historial y export**, stack dockerizado, 423 tests (401 de backend —84 contra Postgres, RabbitMQ y Redis reales— y 22 de frontend), CI |
+| ⬜ **Falta** | **OCR de respaldo** para comprobantes sin QR (Tess4J + OpenCV), que es la mitad de la Fase 1 que queda. Y volver a medir el criterio 2 ahora que hay cámara: el 85% sigue sin reponerse |
 
 **La API hoy:** `POST /auth/register` · `POST /auth/login` ·
-`POST /auth/logout` · `GET /auth/me` · `POST /documents` · `GET /jobs/:id` ·
-`PUT /jobs/:id/confirm` (con correcciones, o sin cuerpo) ·
+`POST /auth/logout` · `GET /auth/me` · `POST /documents` · `GET /jobs` ·
+`GET /jobs/:id` · `PUT /jobs/:id/confirm` (con correcciones, o sin cuerpo) ·
 `GET /export/csv?from=&to=`. Todo menos `register` y `login` necesita
 sesión.
+
+**Y hay pantalla:** <http://localhost:8081> con el stack arriba. El
+navegador ve **un solo origen** — nginx sirve la SPA y proxea la API —
+porque la cookie de sesión es `SameSite=Lax` y un navegador no la manda
+entre orígenes distintos. Por qué eso no es un detalle de deploy, en el
+[ADR 017](docs/adr/017-el-frontend-va-en-el-mismo-origen.md).
 
 Lo que el resto de este documento describe es la **arquitectura final**,
 no el estado de avance. El roadmap de la [sección 11](#11-roadmap-y-estimación-de-tiempo)
@@ -92,6 +98,7 @@ esperando a que cada uno esté sano. Después:
 | Estado del servicio | http://localhost:8080/actuator/health |
 | Métricas | http://localhost:8080/actuator/prometheus |
 | Postgres | `localhost:5433`, base/usuario/clave `facturas` |
+| **La aplicación** | http://localhost:8081 — la SPA, con la API proxeada en el mismo origen |
 | Almacenamiento S3 | http://localhost:9090 |
 | **Consola de RabbitMQ** | http://localhost:15672 — `facturas`/`facturas` |
 | **Prometheus** | http://localhost:9091 — el `9090` lo usa S3Mock |
@@ -104,6 +111,10 @@ esperando a que cada uno esté sano. Después:
 > no dice nada de todo esto.
 
 ### Probarlo
+
+**Lo más rápido es abrir <http://localhost:8081>**: registrarse, subir un
+PDF o usar la cámara, revisar los campos y confirmar. Lo que sigue es el
+mismo recorrido con `curl`, que es lo que el frontend hace por debajo.
 
 Primero hay que tener sesión. Son tres pasos y el primero sorprende: un
 `GET` público, que es lo que entrega la cookie de CSRF.
@@ -212,8 +223,25 @@ fecha;tipo_codigo;tipo;punto_venta;numero;cuit_emisor;razon_social;moneda;cotiza
 15/03/2026;8;Nota de Crédito B;3;1202;30-71234567-1;PANADERÍA LA ESPIGA S.A.;PES;1;-2100,00;70417054367478
 ```
 
-Solo salen los comprobantes **confirmados**, y por **fecha de emisión**,
-no de carga: una factura de marzo subida en mayo pertenece a marzo. La
+El historial es otro endpoint, y filtra por **otra fecha**:
+
+```bash
+curl -b cookies.txt "localhost:8080/jobs?from=2026-11-01&to=2026-11-30&page=0&size=20"
+# {"jobs":[{"jobId":"…","status":"CONFIRMED","total":25300.50,
+#           "invoiceType":"Factura B","issuerBusinessName":"…"}],
+#  "page":0,"size":20,"total":1}
+```
+
+Por **fecha de carga**, no de emisión, y eso es deliberado: un historial
+filtrado por fecha de emisión esconde justo lo que alguien lo abre para
+buscar — los jobs que fallaron, y los que no decodificaron el QR y por eso
+no tienen fecha de emisión en absoluto. El export es la pregunta opuesta.
+Devuelve una fila por **documento** y no por job, porque un comprobante
+reprocesado aparecería dos veces y eso se lee como "se subió dos veces".
+
+Solo salen al export los comprobantes **confirmados**, y por **fecha de
+emisión**, no de carga: una factura de marzo subida en mayo pertenece a
+marzo. La
 nota de crédito sale en negativo, que es lo que hace que el total del
 período cierre. El resto de las reglas del archivo está en la
 [sección 7](#export).
@@ -323,7 +351,7 @@ tiene. El costo es CSRF, que se maneja y no se apaga. Ver
 ### Criterios de aceptación del MVP
 
 1. **PDF de factura electrónica con QR legible → los 12 campos del QR correctos, en el 100% de los casos** de un set de al menos 20 comprobantes reales variados. No es un umbral optimista: el QR es un dato estructurado, o se lee o no se lee.
-2. **Foto de celular:** el QR se detecta **en el navegador, antes de subir**, y la foto se acepta solo si decodificó. Criterio verificable en lugar de un porcentaje: no hay foto aceptada sin QR leído. *(Semana 4 — ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md).)*
+2. **Foto de celular:** el QR se detecta **en el navegador, antes de subir**, y la foto se acepta solo si decodificó. Criterio verificable en lugar de un porcentaje: no hay foto aceptada sin QR leído. *(🔶 **Construido, sin medir.** La cámara lee en vivo con `BarcodeDetector` y `jsQR` de respaldo, y el obturador espera al QR. Pero el obturador espera **solo en la cámara**: el selector de archivos no, porque el criterio 3 pide que un comprobante sin QR entre igual — ver [ADR 017](docs/adr/017-el-frontend-va-en-el-mismo-origen.md). Cuántas fotos reales decodifican en el navegador **no está medido**, y hasta que lo esté este criterio no se declara cumplido: es justo el error que el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md) cometió una vez.)*
 3. Comprobante **sin** QR → degrada a texto/OCR sin romperse; el usuario puede completar a mano. *(🔶 La mitad del servidor está: verificado contra el stack real subiendo un PDF sin QR, completando ocho campos a mano y obteniendo una línea CSV válida de un comprobante del que la cascada no leyó nada. El OCR de respaldo y la pantalla siguen pendientes.)*
 4. Usuario puede corregir cualquier campo y confirmar; cada corrección queda registrada. *(✅ **Cumplido en la API**, falta la pantalla. `field_corrections` llevaba **cero filas desde la primera migración** —una apuesta del día 1— y ahora se escribe en cada revisión, con el valor viejo leído de la base y no declarado por el cliente. El campo corregido además deja de decir que vino del QR. Ver [ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md).)*
 5. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción. Un archivo ilegible o que no es una factura **no es un fallo del sistema**: el formulario sale vacío y el documento queda guardado igual.
@@ -350,7 +378,7 @@ Los diagramas se generan con [Archify](https://github.com/tt-a1i/archify) a part
 
 ### Vista de componentes
 
-> Esto ya es el estado real, con una sola excepción: el **frontend**.
+> Esto ya es el estado real, **incluido el frontend** desde que entró la semana 4. Lo único del diagrama que todavía no existe es el OCR de respaldo dentro del worker.
 > Todo lo demás —los dos servicios, la cola, el outbox, el
 > almacenamiento, Redis, Prometheus— está corriendo.
 
@@ -905,9 +933,50 @@ pasar por el puerto ([ADR 015](docs/adr/015-sesion-con-cookie-y-no-un-token.md))
 Acá vive el **criterio de aceptación 7**: dos usuarios registrados de
 verdad, cada uno con su sesión, y uno pidiendo el job del otro.
 
+`HistoryPostgresTest` cubre el endpoint del historial, y tres de sus diez
+casos son propiedades que solo SQL puede resolver: que un comprobante
+reprocesado aparezca **una vez** (un documento tiene muchos jobs, y sin la
+subconsulta la lista lo muestra dos veces, que se lee como "se subió dos
+veces"); que un job **fallido** siga en la lista (no tiene fila en
+`extracted_invoice_data`, y un join interno descartaría justo las filas
+que alguien abre un historial para encontrar); y el **criterio 7** otra
+vez, que en un endpoint de lista es donde más fácil se olvida — no hay un
+id que chequear, así que lo único que separa a dos usuarios es el
+`WHERE`.
+
 Consecuencia práctica: **`./mvnw test` necesita Docker corriendo.** Los
 tres contenedores —Postgres, RabbitMQ y Redis— arrancan una sola vez por
 JVM y Ryuk los limpia al terminar.
+
+**El frontend tiene 22 tests, y cubren dos cosas.** `npm test`, con vitest
+y jsdom, sin Docker.
+
+El *wrapper* de `fetch`, porque el baile del CSRF **es invisible cuando se
+rompe**: toda escritura contesta 403 —o 401 en un endpoint público— y nada
+en la pantalla dice por qué. Esa confusión ya costó una sesión del lado de
+la API ([ADR 015](docs/adr/015-sesion-con-cookie-y-no-un-token.md)) y las
+dos veces era una cookie que faltaba. Los tests fijan que un `GET` no
+manda token, que un `POST` sin cookie hace primero el `GET` que la emite,
+que el token se lee fresco en cada request —cachearlo manda uno viejo
+después del próximo login— y que el `detail` del `ProblemDetail` se
+conserva, que es lo único accionable de un error.
+
+Y el formulario de revisión: que los nueve campos estén, que las insignias
+de origen se muestren (ocho `QR` y una `texto` en un comprobante con QR,
+nueve `vacío` en uno sin), que el candado del QR no se invierta, que
+"editar" desbloquee **uno** y no todos, y que se manden los nueve campos
+aunque no se haya tocado ninguno — que es la forma que el
+[ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md)
+necesita.
+
+El resto de los componentes los cubre el `tsc -b` del build, que es poco
+pero no es nada: es lo que se rompe cuando la API cambia un campo y el
+frontend sigue leyéndolo.
+
+> **Lo que no está testeado, y conviene decirlo:** que la pantalla se vea
+> bien. Eso se mira abriendo <http://localhost:8081>. Un test de
+> componentes verifica que el formulario tenga nueve inputs; no verifica
+> que quepan en un teléfono.
 
 ### Export
 - CSV: Apache Commons CSV o OpenCSV (nunca a mano con StringBuilder)
@@ -1118,9 +1187,35 @@ correlacionando las dos puntas, lo que agregaría es el span y el timing
 distribuido — útil, pero ya no es lo que falta para poder depurar.
 
 ### Frontend
-- React + Vite, sin Redux (React Query alcanza para polling de estado)
-- **Detección del QR en vivo con la cámara**, antes de subir: [`BarcodeDetector`](https://developer.mozilla.org/en-US/docs/Web/API/BarcodeDetector) donde existe, `jsQR` de respaldo. Confirmar solo se habilita cuando el QR decodificó — ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md)
-- Alternativa más rápida: Thymeleaf server-side dentro del Upload Service (descartada, mobile UX peor)
+- React + Vite + React Query, sin Redux (alcanza para el polling de estado, que es el único estado compartido que hay)
+- **Sin router**, y con fecha de vencimiento: dos pestañas y una vista de detalle no justifican una dependencia. En el momento en que haya una pantalla que valga la pena linkear desde afuera, entra `react-router`
+- Sin framework de CSS: la app son cinco pantallas y un formulario, y una librería de utilidades pesaría más que la app y pondría las decisiones de diseño en strings de clases
+- **Detección del QR en vivo con la cámara**, antes de subir: [`BarcodeDetector`](https://developer.mozilla.org/en-US/docs/Web/API/BarcodeDetector) donde existe, `jsQR` de respaldo, y **se reporta cuál de los dos leyó** — una medición que no dice qué decodificador la produjo es la que se equivocó en el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md)
+- Alternativa más rápida: Thymeleaf server-side dentro del Upload Service (descartada, mobile UX peor — y además la detección en vivo necesita `getUserMedia` y un bucle de decodificado en el cliente, que es una SPA con otro nombre)
+
+**Lo que cuesta pensar del frontend no es React, es cómo se sirve.** La
+cookie de sesión es `HttpOnly` y `SameSite=Lax`
+([ADR 015](docs/adr/015-sesion-con-cookie-y-no-un-token.md)), y un
+navegador **no manda una cookie `Lax` entre orígenes distintos** — esa es
+justamente la regla que la hace valer. La única forma de evitarlo es
+`SameSite=None; Secure`, que exige HTTPS y entonces no funciona en
+`http://localhost` en absoluto.
+
+Así que el navegador ve **un solo origen**: nginx sirve el bundle y proxea
+`/auth`, `/documents`, `/jobs`, `/export` y `/actuator` a la API; el
+servidor de Vite hace lo mismo en desarrollo con su `server.proxy`. Las
+alternativas eran debilitar la cookie o cambiar a un token —deshacer el
+ADR 015 para acomodar al servidor de desarrollo—. Y tiene una ventaja que
+no es menor: **lo que se desarrolla es lo que se despliega**. Todo en el
+[ADR 017](docs/adr/017-el-frontend-va-en-el-mismo-origen.md).
+
+| Decisión del frontend | Por qué |
+|---|---|
+| **El obturador espera al QR, pero solo en la cámara** | Resuelve una tensión real entre el criterio 2 (la foto se acepta solo si decodificó) y el 3 (un comprobante sin QR entra igual). Con un teléfono sobre un papel, decir que el encuadre no sirve es la razón de estar ahí; un PDF sin QR no tiene ángulo que corregir. Hay escape igual —*"sacar la foto igual"*— porque el servidor lee mejor, con dos decodificadores |
+| **Los campos del QR son de solo lectura por defecto** | Una tecla de más en un CAE es peor que un clic de más. Y *por defecto* es decisión del formulario, no del endpoint: la API los acepta igual, porque el criterio 3 lo necesita |
+| **El formulario manda los nueve campos siempre** | Qué cuenta como corrección lo decide el servidor ([ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md)). Así el formulario no lleva la cuenta de lo que se tocó y no puede equivocarse |
+| **Dos rangos de fecha en el historial** | La lista filtra por fecha de **carga** y el export por fecha de **emisión**, rotulados así. Una factura de marzo cargada en mayo pertenece a marzo en un archivo contable y a mayo en "qué hice hoy" |
+| **La cámara se apaga de verdad** | Los *tracks* del stream se detienen al desmontar. Sin eso el teléfono sigue grabando con la luz prendida, que desde afuera se ve igual que spyware |
 
 ### Infraestructura local
 - Docker Compose. Hoy levanta lo que el código usa: **Postgres 16**, **Adobe S3Mock**, **RabbitMQ 3.13** y la propia API. Redis, Prometheus y Grafana entran en las Fases 2 y 3.
@@ -1558,17 +1653,32 @@ facturas-ar/
 │   ├── prometheus/prometheus.yml   # scrapea los DOS servicios
 │   └── grafana/
 │       ├── provisioning/           # datasource y provider, versionados
-│       └── dashboards/pipeline.json    # 8 paneles, ninguno de CPU
+│       └── dashboards/pipeline.json    # 9 paneles, ninguno de CPU
 │
-├── frontend/                       # React + Vite — TODAVÍA NO EXISTE
-│   └── src/                        #   (semana 4 de la Fase 1)
+├── frontend/                       # React + Vite + React Query
+│   ├── Dockerfile                  #   build con node, sirve con nginx
+│   ├── nginx.conf                  #   la SPA + la API en el MISMO origen
+│   │                               #     (ADR 017: la cookie es SameSite=Lax)
+│   ├── vite.config.ts              #   el mismo proxy, para desarrollo
+│   └── src/
+│       ├── api/client.ts           # el baile de CSRF, en un solo lugar
+│       ├── api/hooks.ts            # React Query: polling y mutaciones
+│       ├── api/types.ts            # lo que la API devuelve, como lo devuelve
+│       ├── auth/SignIn.tsx         # registro y login, una pantalla
+│       ├── upload/Upload.tsx       # archivo o cámara
+│       ├── upload/useQrScanner.ts  # BarcodeDetector, jsQR de respaldo
+│       ├── upload/CameraCapture.tsx    # el obturador espera al QR
+│       ├── upload/JobProgress.tsx  # el polling, y los cinco finales
+│       ├── review/ReviewForm.tsx   # los nueve campos, con su origen
+│       ├── history/History.tsx     # historial + export
+│       └── ui/Bits.tsx             # las insignias y los formatos AR
 │
 └── scripts/                        # TODAVÍA NO EXISTE
     └── seed-demo-data.sh
 ```
 
-> Todo lo de arriba de `frontend/` está en el repositorio. Los dos
-> últimos no, y van marcados: un árbol que describe directorios que no
+> Todo menos `scripts/` está en el repositorio. Ese va marcado: un árbol
+> que describe directorios que no
 > existen es la clase de deriva que ya se corrigió una vez acá.
 
 Notas clave:
@@ -1633,7 +1743,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | ✅ 1 | Setup monorepo, entidades JPA + Flyway, `shared-domain` con los value objects (`Cuit` con dígito verificador, `Importe`) |
 | ✅ 2 | Upload endpoint + almacenamiento S3, **estrategia QR** (ZXing; el motor de OpenCV se agregó después de medir, [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)) |
 | ✅ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo de la **razón social**. Neto e IVA quedan afuera: son v2, por la decisión de perfil de usuario |
-| 🔶 4 | ✅ **Auth real** (sesión en cookie, BCrypt, CSRF) y ✅ **la API de revisión** (`confirm` con correcciones por campo auditadas) — las dos se adelantaron al frontend porque son backend y porque desbloquean los criterios 7 y 4. ⬜ Frontend mínimo: upload + **detección del QR en vivo con la cámara** + formulario con origen por campo + historial |
+| ✅ 4 | **Auth real** (sesión en cookie, BCrypt, CSRF), **la API de revisión** (`confirm` con correcciones auditadas) y el **frontend** (upload, cámara que lee el QR en vivo, formulario con origen por campo, historial y export). Se partió en tres y las dos mitades de backend fueron primero, porque desbloqueaban los criterios 7 y 4 |
 | 🔶 5 | ✅ Export CSV con formato Excel-AR y `PUT /jobs/:id/confirm`, que es la puerta al historial exportable. ⬜ Tess4J + OpenCV para comprobantes **sin** QR |
 | ⬜ 6 (buffer) | Timebox de medio día al decodificado por mosaicos en el servidor, pulido |
 
@@ -1718,20 +1828,25 @@ Pulido de UX/responsive, screenshots/demo para el portfolio, README con diagrama
 2. Priorizar que cada fase quede *documentada* (ADRs, README) antes de pasar a la siguiente, por sobre agregar más alcance — es lo que se evalúa en una entrevista, no el volumen de features.
 
 > **Las fases no salieron en orden, y vale decir por qué.** Las Fases 2 y
-> 3 están completas mientras la Fase 1 tiene la semana 4 entera pendiente.
+> 3 se completaron mientras la Fase 1 tenía la semana 4 entera pendiente.
 > No fue improvisación: todo lo que faltaba de la 2 y la 3 es backend, y
 > es lo que este proyecto existe para demostrar (ver [sección 1](#1-visión-y-objetivo)).
-> La semana 4 es frontend.
 >
-> El costo de ese orden es concreto y conviene tenerlo a la vista:
-> todo lo construido se demuestra con `curl`, `psql` y PromQL en vez de
-> con una pantalla. De las tres cosas que faltaban acá, **dos ya están**:
-> se partió la semana 4 y se hizo primero lo que es backend — la
-> autenticación ([ADR 015](docs/adr/015-sesion-con-cookie-y-no-un-token.md))
-> y la revisión con correcciones
-> ([ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md)),
-> que es la que le saca a `FieldCorrection` las cero filas que tuvo todo
-> el proyecto. Lo que queda es la pantalla.
+> La semana 4 entró después, **partida en tres y con las dos mitades de
+> backend primero**: la autenticación
+> ([ADR 015](docs/adr/015-sesion-con-cookie-y-no-un-token.md)) porque
+> desbloqueaba el criterio 7, que hasta entonces no se podía testear; la
+> revisión con correcciones
+> ([ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md))
+> porque desbloqueaba el 4 y le sacaba a `FieldCorrection` las cero filas
+> que tuvo todo el proyecto; y la pantalla al final
+> ([ADR 017](docs/adr/017-el-frontend-va-en-el-mismo-origen.md)).
+>
+> Ese orden tuvo un costo mientras duró — todo se demostraba con `curl`,
+> `psql` y PromQL — y también una ventaja que recomendaría repetir: el
+> frontend se escribió contra una API que ya estaba cerrada y testeada,
+> así que no hubo una sola decisión de backend tomada para salir del paso
+> en una pantalla.
 
 ---
 

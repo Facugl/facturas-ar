@@ -670,6 +670,7 @@ Escritos. Ver [docs/adr/](adr/):
 | [014](adr/014-el-cache-se-invalida-y-la-clave-lleva-el-dueno.md) | Por qué el cache se borra en vez de reescribirse, y por qué la clave lleva el usuario |
 | [015](adr/015-sesion-con-cookie-y-no-un-token.md) | Por qué la sesión va en una cookie y no en un JWT — y las dos cosas que hicieron que un endpoint público contestara 401 |
 | [016](adr/016-el-servidor-calcula-el-diff-de-la-revision.md) | Por qué el cliente manda valores y no cambios — y por qué el pedido es un mapa y no un record con nueve campos nullables |
+| [017](adr/017-el-frontend-va-en-el-mismo-origen.md) | Por qué el frontend proxea la API en vez de hablarle por CORS — y por qué la cámara exige el QR pero el selector de archivos no |
 
 ---
 
