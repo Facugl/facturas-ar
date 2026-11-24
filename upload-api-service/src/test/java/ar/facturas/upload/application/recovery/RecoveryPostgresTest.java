@@ -171,10 +171,24 @@ class RecoveryPostgresTest extends ContainersTest {
         return jobs.findById(jobId).orElseThrow();
     }
 
-    /** Everything qualifies, whatever its age. */
-    private int recoverEverything() {
+    /**
+     * Everything qualifies, whatever its age.
+     *
+     * <p>Returns nothing on purpose, and that is the fix for a test that
+     * failed in CI and passed locally. It used to return the count and
+     * the tests asserted on it — but {@code recover} recovers everything
+     * recoverable, and the database is shared by every test class, so
+     * any job another one left in {@code PROCESSING} or {@code FAILED}
+     * counts too. Test order differs between machines, so the number is
+     * not a property of the system: it is a property of whatever ran
+     * first.
+     *
+     * <p>What <em>is</em> a property of the system is what happened to
+     * the job the test owns, and that is what each one asserts now.
+     */
+    private void recoverEverything() {
         Instant now = Instant.now();
-        return reaper.recover(now, now);
+        reaper.recover(now, now);
     }
 
     // ── El criterio 8 ─────────────────────────────────────────────────
@@ -197,7 +211,7 @@ class RecoveryPostgresTest extends ContainersTest {
         void aStuckJobWithNoAttemptsLeftIsDeadLetteredRatherThanLostForever() {
             UUID jobId = anAbandonedJob(0);
 
-            assertThat(recoverEverything()).isEqualTo(1);
+            recoverEverything();
 
             assertThat(statusOf(jobId)).isEqualTo(JobStatus.DEAD_LETTER);
             assertThat(outbox.findByAggregateId(jobId))
@@ -216,12 +230,13 @@ class RecoveryPostgresTest extends ContainersTest {
         void doesNotStealAJobThatIsStillRunning() {
             UUID jobId = anAbandonedJob(3);
 
-            int moved = reaper.recover(
+            reaper.recover(
                     Instant.now().minus(Duration.ofMinutes(10)),
                     Instant.now().minus(Duration.ofMinutes(10)));
 
-            assertThat(moved).isZero();
-            assertThat(statusOf(jobId)).isEqualTo(JobStatus.PROCESSING);
+            assertThat(statusOf(jobId))
+                    .as("claimed seconds ago, so a ten-minute cutoff does not reach it")
+                    .isEqualTo(JobStatus.PROCESSING);
         }
 
         /**
@@ -240,7 +255,7 @@ class RecoveryPostgresTest extends ContainersTest {
                     jobOf(jobId).markFailed("el PDF no se pudo abrir"));
             assertThat(statusOf(jobId)).isEqualTo(JobStatus.FAILED);
 
-            assertThat(recoverEverything()).isEqualTo(1);
+            recoverEverything();
 
             assertThat(statusOf(jobId)).isEqualTo(JobStatus.PENDING);
             assertThat(outbox.findByAggregateId(jobId)).hasSize(1);
@@ -252,9 +267,12 @@ class RecoveryPostgresTest extends ContainersTest {
             UUID jobId = anAbandonedJob(3);
             tx.executeWithoutResult(status -> jobOf(jobId).markExtracted("qr", null));
 
-            assertThat(recoverEverything()).isZero();
+            recoverEverything();
 
             assertThat(statusOf(jobId)).isEqualTo(JobStatus.EXTRACTED);
+            assertThat(outbox.findByAggregateId(jobId))
+                    .as("and it was not asked for again")
+                    .isEmpty();
         }
     }
 

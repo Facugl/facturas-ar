@@ -15,6 +15,8 @@ import ar.facturas.infrastructure.persistence.UserRepository;
 import ar.facturas.upload.UploadApiApplication;
 import ar.facturas.upload.adapters.in.rest.JobController;
 import ar.facturas.upload.adapters.in.rest.JobResponse;
+import ar.facturas.events.JobExtractionRequested;
+import ar.facturas.upload.application.outbox.Outbox;
 import ar.facturas.upload.application.outbox.OutboxRelay;
 import ar.facturas.upload.application.port.CurrentUser;
 import ar.facturas.upload.application.usecase.UploadComprobante;
@@ -79,6 +81,7 @@ class JobCachePostgresTest extends ContainersTest {
     @Autowired JobController jobController;
     @Autowired JobCache cache;
     @Autowired OutboxRelay relay;
+    @Autowired Outbox outboxWriter;
     @Autowired JobRepository jobs;
     @Autowired DocumentRepository documents;
     @Autowired UserRepository users;
@@ -168,20 +171,40 @@ class JobCachePostgresTest extends ContainersTest {
     @Test
     @DisplayName("el worker invalida lo que la API cacheo, desde otro proceso")
     void theWorkerInvalidatesWhatTheApiCached() {
-        UUID jobId = upload.execute(new UploadComprobanteCommand(
-                owner.getId(), "factura.pdf", "application/pdf",
-                ("%PDF-1.4 " + SEQUENCE.incrementAndGet()).getBytes())).jobId();
+        // NOT through `upload.execute`, and that is the fix for a race
+        // this test had. The upload's commit wakes the relay
+        // immediately, so the worker could finish and evict BEFORE the
+        // read below cached anything — and then the cache held a stale
+        // PENDING answer that nothing would evict again, because the
+        // eviction had already happened. The test timed out waiting for
+        // the TTL, and only sometimes, depending on test order.
+        //
+        // Building the job and its event by hand puts the two steps in
+        // the order the test is about: fill the cache first, publish
+        // second.
+        UUID jobId = aPendingJob();
+        tx.executeWithoutResult(status -> {
+            Job job = jobs.findById(jobId).orElseThrow();
+            outboxWriter.record(jobId, new JobExtractionRequested(
+                    jobId, job.getDocument().getId(),
+                    job.getDocument().getStorageKey(), job.getDocument().getMimeType()));
+        });
 
-        // Cache the in-flight answer, as the frontend's polling would.
-        assertThat(get(jobId).status()).isIn(JobStatus.PENDING, JobStatus.PROCESSING);
+        // The frontend's polling, caching an in-flight answer.
+        assertThat(get(jobId).status()).isEqualTo(JobStatus.PENDING);
         assertThat(cache.get(owner.getId(), jobId)).isPresent();
 
         relay.drain();
 
         // The worker finishes it and evicts. The endpoint stops saying
-        // "procesando" without anybody telling it to.
+        // "procesando" without anybody telling it to — and it could only
+        // do that because the entry is gone, since the row it would have
+        // served is the one that was cached.
         await().atMost(PATIENCE).untilAsserted(() ->
                 assertThat(get(jobId).status()).isEqualTo(JobStatus.EXTRACTED));
+        assertThat(cache.get(owner.getId(), jobId))
+                .as("and what it serves now is a fresh entry, not the old one")
+                .isPresent();
     }
 
     @Test

@@ -177,8 +177,17 @@ class EndToEndTest extends ContainersTest {
         UUID jobId = anAbandonedJob();
         assertThat(statusOf(jobId)).isEqualTo(JobStatus.PROCESSING);
 
+        // No se afirma CUANTOS movio el reaper, y eso es el arreglo de un
+        // test que fallo en CI y pasaba local. `recover` recupera todo lo
+        // recuperable, y la base es la misma para todas las clases de
+        // test: cualquier job que otra haya dejado en PROCESSING o FAILED
+        // cuenta tambien. El orden de los tests difiere entre maquinas,
+        // asi que el numero no es una propiedad del sistema — es una
+        // propiedad de lo que mas haya corrido antes.
+        //
+        // Lo que si es del sistema es lo que le paso a ESTE job.
         Instant now = Instant.now();
-        assertThat(reaper.recover(now, now)).isEqualTo(1);
+        reaper.recover(now, now);
 
         assertThat(statusOf(jobId)).isEqualTo(JobStatus.PENDING);
         assertThat(jobs.findById(jobId).orElseThrow().getRetryCount()).isEqualTo(1);
