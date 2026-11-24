@@ -1,11 +1,11 @@
 package ar.facturas.extraction.pdftext;
 
+import ar.facturas.domain.enums.InvoiceField;
 import ar.facturas.domain.enums.FieldSource;
 import ar.facturas.domain.enums.SourceType;
 import ar.facturas.extraction.DocumentContent;
 import ar.facturas.extraction.ExtractionOutput;
 import ar.facturas.extraction.ExtractionStrategy;
-import ar.facturas.extraction.InvoiceField;
 import ar.facturas.extraction.parser.ComprobanteText;
 import ar.facturas.extraction.parser.ComprobanteTextParser;
 

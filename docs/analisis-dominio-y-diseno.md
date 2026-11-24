@@ -669,6 +669,7 @@ Escritos. Ver [docs/adr/](adr/):
 | [013](adr/013-los-repositorios-son-compartidos.md) | Qué comparten los dos servicios, y por qué la topología del broker la declaran los dos pero el esquema lo migra uno |
 | [014](adr/014-el-cache-se-invalida-y-la-clave-lleva-el-dueno.md) | Por qué el cache se borra en vez de reescribirse, y por qué la clave lleva el usuario |
 | [015](adr/015-sesion-con-cookie-y-no-un-token.md) | Por qué la sesión va en una cookie y no en un JWT — y las dos cosas que hicieron que un endpoint público contestara 401 |
+| [016](adr/016-el-servidor-calcula-el-diff-de-la-revision.md) | Por qué el cliente manda valores y no cambios — y por qué el pedido es un mapa y no un record con nueve campos nullables |
 
 ---
 

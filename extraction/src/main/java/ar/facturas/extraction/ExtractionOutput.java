@@ -1,5 +1,6 @@
 package ar.facturas.extraction;
 
+import ar.facturas.domain.enums.InvoiceField;
 import ar.facturas.domain.enums.FieldSource;
 
 import java.util.ArrayList;

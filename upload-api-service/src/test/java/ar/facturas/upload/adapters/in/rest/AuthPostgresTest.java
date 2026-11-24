@@ -242,6 +242,97 @@ class AuthPostgresTest extends ContainersTest {
         }
     }
 
+    // ── Pedidos mal formados: 400, y durante un rato fueron 500 ───────
+
+    /**
+     * Every one of these answered <strong>500</strong> until
+     * {@code ApiExceptionHandler} started extending
+     * {@code ResponseEntityExceptionHandler}: the catch-all for
+     * {@code Exception} was swallowing Spring MVC's own exceptions before
+     * Spring could map them.
+     *
+     * <p>Worth a test each, and worth being blunt about why: a 500 tells
+     * the client the fault is ours and that retrying might help, when the
+     * request was wrong and will stay wrong. And the {@code @Email} and
+     * {@code @Size} constraints on the registration body were decorative
+     * for as long as it lasted — written, never enforced, and nothing
+     * failed to say so.
+     */
+    @Nested
+    @DisplayName("un pedido mal formado es 400, no 500")
+    class MalformedRequests {
+
+        private HttpResponse<String> post(String path, String json) {
+            Browser browser = new Browser();
+            browser.warmUp();
+            return browser.send(HttpRequest.newBuilder(uri(path))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(json)));
+        }
+
+        @Test
+        @DisplayName("un email que no es un email")
+        void anEmailThatIsNotAnEmail() {
+            HttpResponse<String> response = post("/auth/register",
+                    "{\"email\":\"no-es-un-email\",\"password\":\"unaClaveLarga\"}");
+
+            assertThat(response.statusCode()).isEqualTo(400);
+            assertThat(response.body())
+                    .as("and the message names the field, because this is a form")
+                    .contains("email");
+        }
+
+        @Test
+        @DisplayName("una clave mas corta que el minimo")
+        void aPasswordUnderTheMinimum() {
+            HttpResponse<String> response = post("/auth/register",
+                    "{\"email\":\"x@y.ar\",\"password\":\"corta\"}");
+
+            assertThat(response.statusCode()).isEqualTo(400);
+            assertThat(response.body()).contains("password");
+        }
+
+        @Test
+        @DisplayName("un cuerpo que no es JSON valido")
+        void aBodyThatIsNotJson() {
+            assertThat(post("/auth/register", "{\"email\":").statusCode()).isEqualTo(400);
+        }
+
+        @Test
+        @DisplayName("un id que no es un UUID")
+        void anIdThatIsNotAUuid() {
+            Browser browser = new Browser();
+            browser.signUp();
+
+            assertThat(browser.get("/jobs/no-es-un-uuid").statusCode()).isEqualTo(400);
+        }
+
+        @Test
+        @DisplayName("un export sin parametros, y con una fecha que no es fecha")
+        void anExportWithoutParameters() {
+            Browser browser = new Browser();
+            browser.signUp();
+
+            assertThat(browser.get("/export/csv").statusCode()).isEqualTo(400);
+            assertThat(browser.get("/export/csv?from=marzo&to=2026-03-31").statusCode())
+                    .isEqualTo(400);
+        }
+
+        /** 405, which is a different wrong answer that was also a 500. */
+        @Test
+        @DisplayName("un metodo que el endpoint no soporta es 405")
+        void anUnsupportedMethodIs405() {
+            Browser browser = new Browser();
+            browser.signUp();
+
+            HttpResponse<String> response = browser.send(
+                    HttpRequest.newBuilder(uri("/jobs/" + UUID.randomUUID()))
+                            .DELETE());
+
+            assertThat(response.statusCode()).isEqualTo(405);
+        }
+    }
+
     // ── CSRF ──────────────────────────────────────────────────────────
 
     /**

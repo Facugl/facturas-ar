@@ -1,4 +1,4 @@
-package ar.facturas.extraction;
+package ar.facturas.domain.enums;
 
 /**
  * The fields the cascade can produce.
@@ -9,6 +9,12 @@ package ar.facturas.extraction;
  *
  * <p>Grouped by where they come from, because that is the distinction
  * the whole design turns on.
+ *
+ * <p>Lives in {@code shared-domain} rather than in the extraction module
+ * for the same reason {@link FieldSource} does: these name the fields of
+ * a comprobante, not the steps of an algorithm. Two things speak this
+ * vocabulary — the cascade that fills the fields and the review form
+ * that corrects them — and only one of them is extraction.
  */
 public enum InvoiceField {
 

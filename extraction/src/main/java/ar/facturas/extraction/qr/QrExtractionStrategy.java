@@ -1,10 +1,10 @@
 package ar.facturas.extraction.qr;
 
+import ar.facturas.domain.enums.InvoiceField;
 import ar.facturas.domain.enums.FieldSource;
 import ar.facturas.extraction.DocumentContent;
 import ar.facturas.extraction.ExtractionOutput;
 import ar.facturas.extraction.ExtractionStrategy;
-import ar.facturas.extraction.InvoiceField;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 

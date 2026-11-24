@@ -5,21 +5,22 @@ import ar.facturas.domain.model.Job;
 import ar.facturas.infrastructure.persistence.ExtractedInvoiceDataRepository;
 import ar.facturas.infrastructure.persistence.JobRepository;
 import ar.facturas.upload.application.port.CurrentUser;
-import ar.facturas.upload.application.usecase.JobNotConfirmableException;
+import ar.facturas.upload.application.usecase.ConfirmComprobante;
 import ar.facturas.infrastructure.cache.JobCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -33,6 +34,7 @@ public class JobController {
     private final CurrentUser currentUser;
     private final JobCache cache;
     private final JsonMapper json;
+    private final ConfirmComprobante confirmComprobante;
     private final TransactionTemplate tx;
 
     public JobController(JobRepository jobs,
@@ -40,12 +42,14 @@ public class JobController {
                          CurrentUser currentUser,
                          JobCache cache,
                          JsonMapper json,
+                         ConfirmComprobante confirmComprobante,
                          PlatformTransactionManager transactionManager) {
         this.jobs = jobs;
         this.extractedData = extractedData;
         this.currentUser = currentUser;
         this.cache = cache;
         this.json = json;
+        this.confirmComprobante = confirmComprobante;
         // Read-only, and spelled out rather than annotated so that a
         // cache hit opens no transaction at all. With @Transactional on
         // the handler, every poll would take a connection from the pool
@@ -119,48 +123,75 @@ public class JobController {
     }
 
     /**
-     * The user reviewed this extraction and takes it as correct. Only
-     * from here does a comprobante enter the exportable history.
+     * The user reviewed this extraction, fixed what was wrong, and takes
+     * the rest as correct. Only from here does a comprobante enter the
+     * exportable history.
      *
-     * <p>No body, on purpose, and this is a deliberately small version of
-     * the use case. The review form is what produces corrections — which
-     * field the user changed, from what to what, the {@link
-     * ar.facturas.domain.model.FieldCorrection} rows — and that form does
-     * not exist yet. Designing its request contract now would mean
-     * guessing what the screen sends before the screen is written. So
-     * today confirm says one thing and says it exactly: <em>I looked at
-     * this and it is right.</em>
+     * <p><strong>The body is optional,</strong> and both shapes mean
+     * something precise. With no body, confirm says one thing exactly:
+     * <em>I looked at this and it is right.</em> With a body, it also
+     * says what the extraction got wrong. The empty case was the whole
+     * endpoint until the review contract existed, and it stays supported
+     * because it is still the common one — most comprobantes with a
+     * readable QR need no correction at all.
      *
-     * <p>Until the form lands, a wrong extraction can be confirmed and
-     * will export wrong. That gap closes with the form, not here.
+     * <p>What the client sends are <strong>values, not changes</strong>.
+     * Which of them count as corrections is decided in
+     * {@link ConfirmComprobante} by comparing against the database, so a
+     * form may submit all nine fields every time and only the ones that
+     * differ are recorded. See that class for why that is not a detail.
      *
      * <p>404 for someone else's job, for the same reason as the read
      * above. 409 when the job is in any other state: the call is fine,
-     * the job is not ready.
+     * the job is not ready. 400 when a value is not one its field can
+     * hold — and then nothing at all is written, not the first five
+     * corrections.
+     *
+     * <p><strong>The cache is evicted here,</strong> and it was a bug
+     * that it was not. Confirming changes the row that
+     * {@link #get(UUID)} caches for thirty seconds, so without this the
+     * user who just corrected a field would be served their old value
+     * back and would conclude the correction did not take. The gap
+     * existed before this endpoint accepted a body — back then it only
+     * changed the status, which was wrong more quietly.
      */
     @PutMapping("/{jobId}/confirm")
-    @Transactional
-    public ResponseEntity<JobResponse> confirm(@PathVariable UUID jobId) {
-        return jobs.findById(jobId)
-                .filter(this::belongsToCurrentUser)
-                .map(this::confirmed)
-                .map(job -> ResponseEntity.ok(
-                        JobResponse.from(job, extractedData.findById(job.getId()).orElse(null))))
+    public ResponseEntity<JobResponse> confirm(
+            @PathVariable UUID jobId,
+            @RequestBody(required = false) Confirmation confirmation) {
+
+        UUID userId = currentUser.id();
+        Map<String, String> fields = confirmation == null ? Map.of() : confirmation.fields();
+
+        return confirmComprobante
+                .execute(new ConfirmComprobante.Command(jobId, userId, fields))
+                .map(result -> {
+                    cache.evict(userId, jobId);
+                    return ResponseEntity.ok(JobResponse.from(result.job(), result.data()));
+                })
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     /**
-     * Asks the domain whether the move is legal before making it, so the
-     * caller gets a 409 instead of the {@code IllegalStateException} that
-     * {@link Job#confirm()} would throw. The rule itself stays in
-     * {@link JobStatus} — this only reads it.
+     * The confirm request.
+     *
+     * <p>Wrapped in an object with one key rather than being the map
+     * itself, so that the day confirm carries something else — a note, a
+     * category — it is an added key and not a new contract.
+     *
+     * @param fields the values being submitted, keyed by the camelCase
+     *               names {@link JobResponse.Fields} returns. An entry
+     *               whose value is null clears that field; a field that
+     *               is absent is left exactly as it was. That difference
+     *               is why this is a map and not a record with nine
+     *               nullable fields — see
+     *               {@link ar.facturas.upload.application.review.CorrectableField}.
      */
-    private Job confirmed(Job job) {
-        if (!job.getStatus().canTransitionTo(JobStatus.CONFIRMED)) {
-            throw new JobNotConfirmableException(job.getStatus());
+    public record Confirmation(Map<String, String> fields) {
+
+        public Confirmation {
+            fields = fields == null ? Map.of() : fields;
         }
-        job.confirm();
-        return jobs.save(job);
     }
 
     private boolean belongsToCurrentUser(Job job) {

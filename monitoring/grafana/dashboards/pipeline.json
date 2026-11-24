@@ -396,6 +396,50 @@
         "defaults": {},
         "overrides": []
       }
+    },
+    {
+      "id": 401,
+      "type": "row",
+      "title": "Que campo hay que arreglar",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 402,
+      "type": "barchart",
+      "title": "Campos corregidos a mano",
+      "description": "Cuantas veces el usuario tuvo que arreglar cada campo. Es el panel mas directo del dashboard: el campo mas alto es el que la extraccion se equivoca mas seguido, y por lo tanto donde conviene gastar el proximo dia de trabajo en las reglas de parseo. Lee bien junto con «Origen de cada campo»: ahi se ve de donde sale cada dato, aca lo mal que sale. Un campo que viene del OCR y encima encabeza este grafico es el que hay que atacar. Se cuenta una vez por campo que efectivamente cambio, no por campo enviado: un formulario que reenvia los nueve valores sin tocarlos no mueve nada.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (field) (invoice_field_correction_rate_total)",
+          "legendFormat": "{{field}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
     }
   ]
 }

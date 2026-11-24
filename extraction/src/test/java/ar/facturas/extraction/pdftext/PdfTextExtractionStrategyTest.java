@@ -1,9 +1,9 @@
 package ar.facturas.extraction.pdftext;
 
+import ar.facturas.domain.enums.InvoiceField;
 import ar.facturas.domain.enums.FieldSource;
 import ar.facturas.extraction.DocumentContent;
 import ar.facturas.extraction.ExtractionOutput;
-import ar.facturas.extraction.InvoiceField;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;

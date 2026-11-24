@@ -1,5 +1,6 @@
 package ar.facturas.worker.application;
 
+import ar.facturas.domain.enums.InvoiceField;
 import ar.facturas.domain.model.Document;
 import ar.facturas.domain.model.ExtractedInvoiceData;
 import ar.facturas.domain.model.Job;
@@ -7,7 +8,7 @@ import ar.facturas.domain.port.DocumentStorage;
 import ar.facturas.extraction.DocumentContent;
 import ar.facturas.extraction.ExtractionOrchestrator;
 import ar.facturas.extraction.ExtractionResult;
-import ar.facturas.extraction.InvoiceField;
+
 import ar.facturas.infrastructure.cache.JobCache;
 import ar.facturas.infrastructure.persistence.DocumentRepository;
 import ar.facturas.infrastructure.persistence.ExtractedInvoiceDataRepository;

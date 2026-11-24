@@ -26,13 +26,14 @@ vuelve solo; y todo eso se mide en Prometheus.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, **autenticación real con sesión en cookie y CSRF**, stack dockerizado, 340 tests (61 contra Postgres, RabbitMQ y Redis reales), CI |
-| ⬜ **Falta** | Formulario de revisión (y con él las correcciones por campo), detección del QR en el cliente, OCR de respaldo y frontend — es decir, **lo que queda de la semana 4 de la Fase 1 y la mitad de la 5** |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, **autenticación real con sesión en cookie y CSRF**, **revisión con correcciones por campo auditadas**, stack dockerizado, 391 tests (74 contra Postgres, RabbitMQ y Redis reales), CI |
+| ⬜ **Falta** | El formulario de revisión en pantalla (la API que lo sostiene ya está), detección del QR en el cliente, OCR de respaldo y frontend — es decir, **lo que queda de la semana 4 de la Fase 1 y la mitad de la 5** |
 
 **La API hoy:** `POST /auth/register` · `POST /auth/login` ·
 `POST /auth/logout` · `GET /auth/me` · `POST /documents` · `GET /jobs/:id` ·
-`PUT /jobs/:id/confirm` · `GET /export/csv?from=&to=`. Todo menos
-`register` y `login` necesita sesión.
+`PUT /jobs/:id/confirm` (con correcciones, o sin cuerpo) ·
+`GET /export/csv?from=&to=`. Todo menos `register` y `login` necesita
+sesión.
 
 Lo que el resto de este documento describe es la **arquitectura final**,
 no el estado de avance. El roadmap de la [sección 11](#11-roadmap-y-estimación-de-tiempo)
@@ -167,13 +168,40 @@ Subir la misma factura en un archivo distinto devuelve `202`, y el job
 queda en `DUPLICATE` apuntando al original — son dos barreras distintas,
 explicadas en el [ADR 008](docs/adr/008-deduplicacion-en-tres-capas.md).
 
-Confirmado el comprobante, entra al historial exportable:
+Confirmado el comprobante, entra al historial exportable. Sin cuerpo,
+confirmar dice una sola cosa — *miré esto y está bien*:
 
 ```bash
 curl "${AUTH[@]}" -X PUT localhost:8080/jobs/863f24b4-.../confirm
 # 200 OK, el job queda en CONFIRMED
 # 409 si todavía no terminó de extraerse: el pedido está bien, el job no está listo
+```
 
+Y con cuerpo, dice además qué estaba mal. Esto es lo que va a mandar el
+formulario de revisión:
+
+```bash
+curl "${AUTH[@]}" "${JSON[@]}" -X PUT \
+     -d '{"fields":{"issuerBusinessName":"PANADERÍA LA ESPIGA S.A.",
+                    "total":"18450.00",
+                    "cae":null}}' \
+     localhost:8080/jobs/863f24b4-.../confirm
+```
+
+Tres cosas de ese pedido valen la explicación, y están en el
+[ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md):
+
+| | |
+|---|---|
+| El cliente manda **valores, no cambios** | Quién decide qué cuenta como corrección es el servidor, comparando contra la base. Así `original_value` no se puede falsificar, y un formulario que reenvía los nueve campos registra solo los que difieren |
+| Es un **mapa** y no un record con nueve campos nullables | Clave ausente = dejalo como está. Clave con `null` = vacialo. Con un record, `null` tendría que significar las dos cosas |
+| Los valores van como **string** | Es lo que guarda la tabla de auditoría, y obliga a que cada campo pase por su propio parseo: un CUIT con el dígito verificador mal se rechaza con **400** y un mensaje que lo dice |
+
+Un campo corregido deja de decir que vino del QR: pasa a `source: USER`.
+El cartelito de "esto es dato oficial" tiene que dejar de aparecer en un
+campo que el usuario escribió a mano.
+
+```bash
 curl -b cookies.txt -OJ "localhost:8080/export/csv?from=2026-03-01&to=2026-03-31"
 # comprobantes-2026-03-01-a-2026-03-31.csv
 ```
@@ -276,7 +304,7 @@ tiene. El costo es CSRF, que se maneja y no se apaga. Ver
 | **Perfil objetivo** | **Monotributista**, registrando los comprobantes que recibe. Decidido — ver [análisis de dominio §1.2](docs/analisis-dominio-y-diseno.md). El responsable inscripto queda para v2: necesita IVA por alícuota y percepciones, que es todo lo que el QR no trae |
 | Ingesta | Subida de PDF o foto (JPG/PNG) desde web, responsive (mobile-first, porque la gente saca fotos desde el celular) |
 | Extracción | **Del QR (exactos):** CUIT emisor, tipo de comprobante, punto de venta, número, fecha de emisión, importe total, moneda, cotización, documento del receptor, CAE. **Del texto/OCR:** razón social del emisor — y nada más |
-| Revisión | Formulario editable con los campos extraídos antes de confirmar, **marcando el origen de cada campo** (QR, texto embebido u OCR). Los que vienen del QR son solo lectura por defecto |
+| Revisión | Formulario editable con los campos extraídos antes de confirmar, **marcando el origen de cada campo** (QR, texto embebido u OCR). Los que vienen del QR son solo lectura por defecto — *por defecto es una decisión del formulario, no del endpoint: el servidor los acepta igual, porque el criterio 3 pide poder completar a mano un comprobante sin QR*. La API ya está ([ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md)); falta la pantalla |
 | Historial | Lista de facturas cargadas por usuario, con estado y filtro por fecha |
 | Export | CSV de un lote (rango de fechas) y PDF prolijo de una factura individual |
 | Confiabilidad | Reintentos automáticos en el worker; si falla definitivamente, reintento manual o recarga |
@@ -296,8 +324,8 @@ tiene. El costo es CSRF, que se maneja y no se apaga. Ver
 
 1. **PDF de factura electrónica con QR legible → los 12 campos del QR correctos, en el 100% de los casos** de un set de al menos 20 comprobantes reales variados. No es un umbral optimista: el QR es un dato estructurado, o se lee o no se lee.
 2. **Foto de celular:** el QR se detecta **en el navegador, antes de subir**, y la foto se acepta solo si decodificó. Criterio verificable en lugar de un porcentaje: no hay foto aceptada sin QR leído. *(Semana 4 — ver [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md).)*
-3. Comprobante **sin** QR → degrada a texto/OCR sin romperse; el usuario puede completar a mano.
-4. Usuario puede corregir cualquier campo y confirmar; cada corrección queda registrada.
+3. Comprobante **sin** QR → degrada a texto/OCR sin romperse; el usuario puede completar a mano. *(🔶 La mitad del servidor está: verificado contra el stack real subiendo un PDF sin QR, completando ocho campos a mano y obteniendo una línea CSV válida de un comprobante del que la cascada no leyó nada. El OCR de respaldo y la pantalla siguen pendientes.)*
+4. Usuario puede corregir cualquier campo y confirmar; cada corrección queda registrada. *(✅ **Cumplido en la API**, falta la pantalla. `field_corrections` llevaba **cero filas desde la primera migración** —una apuesta del día 1— y ahora se escribe en cada revisión, con el valor viejo leído de la base y no declarado por el cliente. El campo corregido además deja de decir que vino del QR. Ver [ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md).)*
 5. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción. Un archivo ilegible o que no es una factura **no es un fallo del sistema**: el formulario sale vacío y el documento queda guardado igual.
 6. Export CSV de un rango de fechas que abre en Excel y Sheets con montos como números y acentos correctos, **sin intervención manual**. *(✅ **Cumplido en los dos**, verificado abriendo el archivo. La vuelta por Excel encontró algo que ningún test podía: el CAE salía como `7,04171E+13`.)*
 7. Un usuario no puede acceder a datos de otro — con test automatizado que lo demuestre. *(✅ **Cumplido.** El test registra dos usuarios por HTTP, cada uno con su sesión; uno sube un comprobante y el otro pide ese job y recibe **404**, no 403 — un 403 confirmaría que existe. No se podía testear antes: el sustituto de autenticación atribuía todo request al mismo usuario. Ver [`AuthPostgresTest`](upload-api-service/src/test/java/ar/facturas/upload/adapters/in/rest/AuthPostgresTest.java).)*
@@ -559,6 +587,17 @@ corrected_at
 ```
 
 > Dataset base para: (1) métrica de qué campo falla más, (2) futuro entrenamiento de modelo si se abandona el approach de reglas.
+
+> **Se escribe desde la revisión.** Estuvo con cero filas desde la
+> primera migración hasta acá, y eso era la apuesta: el dataset que dice
+> qué regla de parseo anda peor no se puede juntar después, porque para
+> entonces las correcciones ya se tiraron.
+>
+> `original_value` lo lee el servidor de la base, no lo declara el
+> cliente — si no, la tabla sería un registro de lo que el cliente dice
+> que pasó. Es append-only: una corrección es algo que ocurrió, así que
+> editarla sería reescribir la historia, que es justamente el valor de la
+> tabla. Ver [ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md).
 
 ---
 
@@ -1003,10 +1042,27 @@ de métrica es un contrato con un panel y con una alerta, y es un contrato
 que se rompe en silencio: si lo renombrás, la consulta no falla —
 devuelve vacío, que se ve igual que un sistema sano.
 
-**Lo que falta:** `invoice.field.correction.rate` necesita el formulario
-de revisión (no hay correcciones que contar todavía) e
-`invoice.ocr.confidence` necesita el OCR. Las dos entran con el código
-que las produce.
+**`invoice.field.correction.rate` ya cuenta.** Entró con la revisión, y
+es la métrica más directa del dashboard: el campo más alto es el que la
+extracción se equivoca más seguido, o sea donde conviene gastar el
+próximo día de trabajo en las reglas de parseo. Se incrementa una vez por
+campo que **efectivamente cambió**, no por campo enviado — si no, mediría
+cómo manda el formulario en vez de cómo anda la extracción.
+
+**Lo que falta:** `invoice.ocr.confidence`, que necesita el OCR. Entra
+con el código que la produce.
+
+> **Un hallazgo del día que entró la revisión, y era peor que lo que
+> estaba construyendo.** Probando el `curl` de arriba salió un 500 donde
+> esperaba un 400, y tirando del hilo: **todo pedido mal formado de toda
+> la API contestaba 500.** Un email inválido, una clave corta, un id que
+> no es UUID, un export sin parámetros, un `DELETE` — todos. La causa era
+> que `ApiExceptionHandler` reclamaba `Exception` como red de último
+> recurso, y eso le gana a las excepciones propias de Spring MVC antes de
+> que Spring pueda mapearlas. Las anotaciones `@Email` y `@Size` que
+> escribí con la autenticación eran decorativas: puestas, nunca
+> aplicadas, y nada falló para avisarlo. El detalle está en el
+> [ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md).
 
 > Un dashboard con "tasa de detección de QR" y "origen de cada campo" es mucho más interesante de mostrar que uno con uso de CPU: habla del problema, no de la máquina.
 
@@ -1456,13 +1512,15 @@ facturas-ar/
 │       ├── adapters/out/messaging/ # RabbitOutboxPublisher: espera la
 │       │                           #   confirmación del broker antes de volver
 │       ├── application/usecase/    # UploadComprobante, ExportComprobantes,
-│       │                           #   RequeueJob
+│       │                           #   ConfirmComprobante, RequeueJob
 │       ├── application/outbox/     # Outbox (escribe), OutboxRelay (vacía),
 │       │                           #   OutboxPublisher (el puerto al transporte)
 │       ├── application/event/      # ComprobanteUploaded + DrainOutboxOnUpload
 │       ├── application/recovery/   # RecoverJobs: el reaper
 │       ├── application/metrics/    # PipelineMetrics: los nombres, en un solo lugar
 │       ├── application/export/     # ComprobanteCsvWriter: las reglas Excel-AR
+│       ├── application/review/     # CorrectableField: qué se puede corregir
+│       │                           #   y cómo un string se vuelve ese valor
 │       ├── application/port/       # CurrentUser
 │       ├── config/security/         # SecurityConfig, AuthenticatedUser,
 │       │                           #   DatabaseUserDetailsService,
@@ -1481,6 +1539,9 @@ facturas-ar/
 ├── shared-infrastructure/          # cómo se llega a lo que los dos comparten
 │   └── src/main/java/.../infrastructure/
 │       ├── persistence/            # los repositorios. UNA base, UN mapeo
+│       │                           #   (FieldCorrectionRepository fue el
+│       │                           #    último: nada podía escribir ahí
+│       │                           #    hasta que existió la revisión)
 │       ├── storage/                # S3DocumentStorage + su config
 │       ├── messaging/              # RabbitTopology: los dos la declaran
 │       ├── cache/                  # JobCache: la API lee, el worker invalida
@@ -1572,7 +1633,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | ✅ 1 | Setup monorepo, entidades JPA + Flyway, `shared-domain` con los value objects (`Cuit` con dígito verificador, `Importe`) |
 | ✅ 2 | Upload endpoint + almacenamiento S3, **estrategia QR** (ZXing; el motor de OpenCV se agregó después de medir, [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)) |
 | ✅ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo de la **razón social**. Neto e IVA quedan afuera: son v2, por la decisión de perfil de usuario |
-| 🔶 4 | ✅ **Auth real** (sesión en cookie, BCrypt, CSRF) — se adelantó al frontend porque es backend y porque desbloquea el criterio 7. ⬜ Frontend mínimo: upload + **detección del QR en vivo con la cámara** + formulario con origen por campo + historial |
+| 🔶 4 | ✅ **Auth real** (sesión en cookie, BCrypt, CSRF) y ✅ **la API de revisión** (`confirm` con correcciones por campo auditadas) — las dos se adelantaron al frontend porque son backend y porque desbloquean los criterios 7 y 4. ⬜ Frontend mínimo: upload + **detección del QR en vivo con la cámara** + formulario con origen por campo + historial |
 | 🔶 5 | ✅ Export CSV con formato Excel-AR y `PUT /jobs/:id/confirm`, que es la puerta al historial exportable. ⬜ Tess4J + OpenCV para comprobantes **sin** QR |
 | ⬜ 6 (buffer) | Timebox de medio día al decodificado por mosaicos en el servidor, pulido |
 
@@ -1580,9 +1641,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 > frontend. Se dio vuelta por una razón concreta: hasta que existió, los
 > datos entraban al sistema y no salían, y "de la foto al CSV" era una
 > promesa que el proyecto no podía cumplir ni siquiera con `curl`. Ahora
-> el lazo cierra sin una línea de frontend. El costo es que el
-> comprobante se confirma sin poder corregirlo, porque corregir es el
-> formulario de revisión y eso sí es la semana 4.
+> el lazo cierra sin una línea de frontend.
 
 > **El orden cambió respecto de la versión anterior de este roadmap, y es importante:** la estrategia QR va primero porque con ella sola ya existe un sistema que extrae datos correctos de una factura real. El OCR, que antes ocupaba la semana 3 entera, baja a la semana 5. Se entrega valor demostrable tres semanas antes.
 >
@@ -1665,13 +1724,14 @@ Pulido de UX/responsive, screenshots/demo para el portfolio, README con diagrama
 > La semana 4 es frontend.
 >
 > El costo de ese orden es concreto y conviene tenerlo a la vista:
-> `FieldCorrection` sigue con **cero filas** —una apuesta de diseño del
-> día 1 que todavía no produjo nada, porque necesita el formulario— y
 > todo lo construido se demuestra con `curl`, `psql` y PromQL en vez de
-> con una pantalla. De las tres cosas que faltaban acá, la autenticación
-> ya está: se partió la semana 4 y se hizo primero la mitad que es
-> backend ([ADR 015](docs/adr/015-sesion-con-cookie-y-no-un-token.md)).
-> Las otras dos las desbloquea el formulario.
+> con una pantalla. De las tres cosas que faltaban acá, **dos ya están**:
+> se partió la semana 4 y se hizo primero lo que es backend — la
+> autenticación ([ADR 015](docs/adr/015-sesion-con-cookie-y-no-un-token.md))
+> y la revisión con correcciones
+> ([ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md)),
+> que es la que le saca a `FieldCorrection` las cero filas que tuvo todo
+> el proyecto. Lo que queda es la pantalla.
 
 ---
 

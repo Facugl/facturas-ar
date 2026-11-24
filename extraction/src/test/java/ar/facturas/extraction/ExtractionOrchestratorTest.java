@@ -1,5 +1,6 @@
 package ar.facturas.extraction;
 
+import ar.facturas.domain.enums.InvoiceField;
 import ar.facturas.domain.enums.FieldSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

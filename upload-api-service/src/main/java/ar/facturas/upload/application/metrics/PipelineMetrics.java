@@ -36,6 +36,13 @@ import java.time.Instant;
  *       {@code invoice.deadletter.received}. Both are mechanisms that
  *       fail by doing nothing, which is the worst way for a recovery
  *       mechanism to fail</li>
+ *   <li>Which field does the extraction get wrong most often? →
+ *       {@code invoice.field.correction.rate}, tagged by field. This is
+ *       the one meter here that is not about the pipeline's health but
+ *       about where the next day of work on the parsing rules should go.
+ *       Its slow counterpart is the {@code field_corrections} table,
+ *       which keeps the before and after; the counter is what can be
+ *       graphed without querying anything</li>
  * </ul>
  *
  * <p><strong>What used to be here and now is not.</strong> Everything
@@ -60,6 +67,7 @@ public class PipelineMetrics {
     static final String OUTBOX_PENDING = "invoice.outbox.pending";
     static final String RECOVERY_MOVES = "invoice.recovery.moves";
     static final String DEADLETTER_RECEIVED = "invoice.deadletter.received";
+    static final String FIELD_CORRECTIONS = "invoice.field.correction.rate";
 
     private final MeterRegistry registry;
     private final OutboxEventRepository outbox;
@@ -125,6 +133,33 @@ public class PipelineMetrics {
         Counter.builder(DEADLETTER_RECEIVED)
                 .description("Messages that reached the dead-letter queue")
                 .tag("resolution", resolution)
+                .register(registry)
+                .increment();
+    }
+
+    // ── Revision ────────────────────────────────────────────────
+
+    /**
+     * One field a user had to fix during review.
+     *
+     * <p>Called once per field that actually changed, not once per field
+     * submitted — a form that echoes back all nine values unchanged
+     * moves this counter by zero. Otherwise the metric would measure how
+     * the frontend submits instead of how the extraction performs.
+     *
+     * <p>“Rate” is in the name and not in the meter on purpose: a counter
+     * is what gets scraped, and the rate is
+     * {@code rate(invoice_field_correction_rate_total[1h])} at query
+     * time. A meter that stored a rate would have to pick a window, and
+     * the window belongs to whoever is asking.
+     *
+     * @param field the snake_case key, the same one used in
+     *              {@code field_sources} and in {@code field_corrections}
+     */
+    public void fieldCorrected(String field) {
+        Counter.builder(FIELD_CORRECTIONS)
+                .description("Fields the user corrected while reviewing an extraction")
+                .tag("field", field)
                 .register(registry)
                 .increment();
     }

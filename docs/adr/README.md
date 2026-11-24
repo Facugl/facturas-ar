@@ -25,6 +25,7 @@ pierde rápido, y es lo único que sirve cuando hay que revisarla.
 | [013](013-los-repositorios-son-compartidos.md) | La base, el bucket y la topología del broker son compartidos, no duplicados | Aceptada · implementada |
 | [014](014-el-cache-se-invalida-y-la-clave-lleva-el-dueno.md) | **El cache se invalida, no se actualiza; y la clave lleva el dueño** | Aceptada · implementada |
 | [015](015-sesion-con-cookie-y-no-un-token.md) | **Sesión con cookie, y no un token** | Aceptada · implementada |
+| [016](016-el-servidor-calcula-el-diff-de-la-revision.md) | **El servidor calcula el diff de la revisión** | Aceptada · implementada |
 
 Hay una cadena de correcciones acá, y vale leerla en orden. El
 [009](009-deteccion-del-qr-en-el-cliente.md) revisa al

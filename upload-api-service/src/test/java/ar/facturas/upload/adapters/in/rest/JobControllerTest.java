@@ -1,6 +1,5 @@
 package ar.facturas.upload.adapters.in.rest;
 
-import ar.facturas.domain.enums.JobStatus;
 import ar.facturas.domain.model.Document;
 import ar.facturas.domain.model.Job;
 import ar.facturas.domain.model.User;
@@ -8,23 +7,24 @@ import ar.facturas.infrastructure.persistence.ExtractedInvoiceDataRepository;
 import ar.facturas.infrastructure.persistence.JobRepository;
 import ar.facturas.infrastructure.cache.JobCache;
 import ar.facturas.upload.application.port.CurrentUser;
-import ar.facturas.upload.application.usecase.JobNotConfirmableException;
+import ar.facturas.upload.application.usecase.ConfirmComprobante;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -49,6 +49,7 @@ class JobControllerTest {
     @Mock ExtractedInvoiceDataRepository extractedData;
     @Mock CurrentUser currentUser;
     @Mock JobCache cache;
+    @Mock ConfirmComprobante confirmComprobante;
     @Mock org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     JobController controller;
@@ -69,7 +70,7 @@ class JobControllerTest {
         lenient().when(cache.get(any(), any())).thenReturn(Optional.empty());
 
         controller = new JobController(jobs, extractedData, currentUser, cache,
-                JsonMapper.builder().build(), transactionManager);
+                JsonMapper.builder().build(), confirmComprobante, transactionManager);
     }
 
     private static Job jobOwnedBy(UUID userId) {
@@ -138,10 +139,15 @@ class JobControllerTest {
     }
 
     /**
-     * Confirming is the gate into the exportable history: nothing the
-     * user has not approved reaches the CSV. So these cover both halves —
-     * that the gate opens when it should, and that it is the same door
-     * RN-07 locks.
+     * What the <em>endpoint</em> still owns now that the rules moved into
+     * {@link ConfirmComprobante}: handing the use case the right user,
+     * turning an empty result into a 404, and — the one that was a real
+     * bug — dropping the cached answer.
+     *
+     * <p>The state machine, the ownership check and everything about
+     * corrections are tested in {@code ConfirmComprobanteTest}, against
+     * the class that decides them. Asserting them here too would be
+     * asserting a mock.
      */
     @Nested
     @DisplayName("confirming an extraction")
@@ -154,68 +160,60 @@ class JobControllerTest {
             return job;
         }
 
+        /**
+         * The bug this covers is silent and user-visible: confirm changes
+         * the row that GET caches for thirty seconds, so without the
+         * eviction the user who just corrected a field is served their
+         * old value back and concludes the correction did not take.
+         */
         @Test
-        void movesAReviewedJobIntoTheExportableHistory() {
+        @DisplayName("confirmar invalida el cache, o el usuario ve su correccion sin aplicar")
+        void confirmingDropsTheCachedAnswer() {
             Job job = extractedJobOwnedBy(ANA);
             when(currentUser.id()).thenReturn(ANA);
-            when(jobs.findById(job.getId())).thenReturn(Optional.of(job));
-            when(jobs.save(job)).thenReturn(job);
-            when(extractedData.findById(job.getId())).thenReturn(Optional.empty());
+            when(confirmComprobante.execute(any()))
+                    .thenReturn(Optional.of(new ConfirmComprobante.Result(
+                            job, null, List.of("issuerBusinessName"))));
 
-            var response = controller.confirm(job.getId());
+            var response = controller.confirm(job.getId(), null);
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-            assertThat(job.getStatus()).isEqualTo(JobStatus.CONFIRMED);
+            verify(cache).evict(ANA, job.getId());
         }
 
-        /**
-         * 409, because the request is fine and the same call works once
-         * the extraction finishes. A 400 would tell the caller to change
-         * the request, which is the wrong advice.
-         */
+        /** No body at all is a confirmation with nothing corrected. */
         @Test
-        @DisplayName("a job that has not been extracted yet is a conflict, not a bad request")
-        void refusesAJobThatIsNotWaitingForReview() {
-            Job pending = jobOwnedBy(ANA);
-            when(currentUser.id()).thenReturn(ANA);
-            when(jobs.findById(pending.getId())).thenReturn(Optional.of(pending));
-
-            assertThatThrownBy(() -> controller.confirm(pending.getId()))
-                    .isInstanceOf(JobNotConfirmableException.class)
-                    .hasMessageContaining("PENDING");
-
-            verify(jobs, never()).save(any());
-        }
-
-        /** Confirmed is terminal: a second confirm is not a no-op, it is a conflict. */
-        @Test
-        void refusesToConfirmTwice() {
+        @DisplayName("sin cuerpo, se confirma sin corregir nada")
+        void aMissingBodyIsAConfirmationWithNoCorrections() {
             Job job = extractedJobOwnedBy(ANA);
-            job.confirm();
             when(currentUser.id()).thenReturn(ANA);
-            when(jobs.findById(job.getId())).thenReturn(Optional.of(job));
+            when(confirmComprobante.execute(any()))
+                    .thenReturn(Optional.of(new ConfirmComprobante.Result(job, null, List.of())));
 
-            assertThatThrownBy(() -> controller.confirm(job.getId()))
-                    .isInstanceOf(JobNotConfirmableException.class);
+            controller.confirm(job.getId(), null);
+
+            ArgumentCaptor<ConfirmComprobante.Command> command =
+                    ArgumentCaptor.forClass(ConfirmComprobante.Command.class);
+            verify(confirmComprobante).execute(command.capture());
+            assertThat(command.getValue().fields()).isEmpty();
+            assertThat(command.getValue().userId()).isEqualTo(ANA);
         }
 
         /**
-         * The write-side version of RN-07, and the worse one: a read leaks
-         * another user's data, this would let a stranger push their
-         * comprobante into someone else's exportable history.
+         * An empty result means "no such job for this user", and the two
+         * halves of that are deliberately indistinguishable. The endpoint
+         * only has to not turn it into a 500.
          */
         @Test
-        @DisplayName("nobody can confirm someone else's job")
-        void refusesAJobBelongingToAnotherUser() {
-            Job anasJob = extractedJobOwnedBy(ANA);
+        @DisplayName("lo que el caso de uso no encuentra es un 404, y no se invalida nada")
+        void nothingFoundIsNotFound() {
             when(currentUser.id()).thenReturn(BETO);
-            when(jobs.findById(anasJob.getId())).thenReturn(Optional.of(anasJob));
+            when(confirmComprobante.execute(any())).thenReturn(Optional.empty());
 
-            var response = controller.confirm(anasJob.getId());
+            var response = controller.confirm(UUID.randomUUID(), null);
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-            assertThat(anasJob.getStatus()).isEqualTo(JobStatus.EXTRACTED);
-            verify(jobs, never()).save(any());
+            verify(cache, never()).evict(any(), any());
         }
     }
 }
