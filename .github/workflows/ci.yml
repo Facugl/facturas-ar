@@ -33,6 +33,48 @@ jobs:
       - name: Permisos del wrapper
         run: chmod +x ./mvnw
 
+      # Tesseract, porque los tests del OCR corren de verdad.
+      #
+      # El jar de Tess4J trae `eng.traineddata` y los nativos de WINDOWS,
+      # asi que en una laptop Windows el OCR funciona sin instalar nada —
+      # y en este runner, que es Linux, no: falla con
+      # `NoClassDefFoundError: Could not initialize class TessAPI`.
+      #
+      # Es la misma forma de bug que ReviewPostgresTest con el S3Mock:
+      # verde local porque la maquina tiene algo que CI no. Y el arreglo
+      # es el mismo — que CI tenga las dependencias nativas del runtime,
+      # no que el test se saltee. `TesseractOcrEngineTest` esta escrito
+      # para GRITAR cuando Tesseract no esta, porque sin el todo
+      # comprobante sin QR degrada en silencio a nada extraido, que se ve
+      # igual que "esa foto no se podia leer". Aca grito, e hizo su
+      # trabajo.
+      #
+      # `-spa` y no solo el base: es el mismo paquete que instala la
+      # imagen del worker, asi que CI mide con el modelo de espanol que
+      # corre en produccion y no con el ingles del jar.
+      - name: Instalar Tesseract
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa
+          tesseract --version | head -2
+          # La ruta la descubre, no la adivina: lleva el numero mayor de
+          # Tesseract (hoy /usr/share/tesseract-ocr/5/tessdata) y
+          # ubuntu-latest va a cambiar de version algun dia. Hardcodearla
+          # no romperia los tests —el motor cae al `eng` del jar— pero CI
+          # mediria con otro idioma que produccion y en silencio.
+          echo "TESSDATA_PREFIX=$(dirname "$(find /usr/share/tesseract-ocr -name spa.traineddata | head -1)")" >> "$GITHUB_ENV"
+          echo "tessdata en: $TESSDATA_PREFIX"
+
+      - name: Verificar que spa quedo disponible
+        # Un paso propio porque es la diferencia entre medir con el modelo
+        # de espanol y medir con el de ingles, y las dos cosas pasan los
+        # tests.
+        run: |
+          test -f "$TESSDATA_PREFIX/spa.traineddata"             || { echo "no hay spa.traineddata en $TESSDATA_PREFIX"; exit 1; }
+          echo "ok: $TESSDATA_PREFIX/spa.traineddata"
+
+      # TESSDATA_PREFIX lo puso el paso de arriba en GITHUB_ENV, que es
+      # la misma variable que exporta la imagen del worker.
       - name: Compilar y correr los tests
         run: ./mvnw -B --no-transfer-progress verify
 
