@@ -26,7 +26,7 @@ vuelve solo; y todo eso se mide en Prometheus.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, **autenticación real con sesión en cookie y CSRF**, **revisión con correcciones por campo auditadas**, **frontend React con cámara que lee el QR en vivo, formulario de revisión, historial y export**, **OCR de respaldo con Tesseract para comprobantes sin QR**, stack dockerizado, 453 tests (431 de backend —84 contra Postgres, RabbitMQ y Redis reales— y 22 de frontend), CI |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, **autenticación real con sesión en cookie y CSRF**, **revisión con correcciones por campo auditadas**, **frontend React con cámara que lee el QR en vivo, formulario de revisión, historial y export**, **OCR de respaldo con Tesseract para comprobantes sin QR**, stack dockerizado, 455 tests (433 de backend —84 contra Postgres, RabbitMQ y Redis reales— y 22 de frontend), CI |
 | ⬜ **Falta** | **Medir** — el criterio 2 (cuántas fotos reales decodifican en el navegador) y el OCR contra escaneos reales. Las dos necesitan comprobantes que no están en el repo, y ninguna se declara cumplida sin datos |
 
 **La API hoy:** `POST /auth/register` · `POST /auth/login` ·
@@ -863,25 +863,48 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 - Jackson — parseo del JSON del QR (ya viene con Spring Boot)
 - **Tess4J 5.16** (Tesseract 5.5 en el contenedor: `tesseract-ocr tesseract-ocr-spa`) — estrategia de último recurso, **en uso**
 
-**El OCR quedó con un solo paso de preprocesado, y eso es una medición.**
-Estaban escritos los tres que recomienda cualquier guía — ampliar la
-página chica, enderezarla, binarizar con Otsu — y después se midieron
-contra páginas desenfocadas, comprimidas en JPEG 0,45 e iluminadas de un
-lado:
+**El preprocesado del OCR es la medición que me salió mal — dos veces —
+y vale más contada así.** Estaban escritos los tres pasos que recomienda
+cualquier guía: ampliar la página chica, enderezarla, binarizar con Otsu.
 
-| | |
-|---|---|
-| **Otsu hacía ilegible el CUIT** | No peor: ausente. Tesseract ya binariza por su cuenta y adaptativamente, por región; un umbral global aplicado antes le quita el gris que iba a usar, y sobre un glifo desenfocado un corte duro convierte los trazos de un 3 en la forma de un 8 |
-| **El upscale no pagó nada** | Y la interpolación cúbica sobre una foto borrosa amplifica el desenfoque que interpola |
-| **El deskew sí pagó** | Una página a 4 grados pasa de ilegible a legible, y nunca empeora una derecha porque se niega a tocarla |
+Los medí en mi máquina (Windows, con el `eng` que viene en el jar) y
+borré dos. CI los corrió en Linux contra `spa` — el idioma que instala la
+imagen del worker, o sea el que corre en producción — y fallaron
+justamente las dos aserciones que habían justificado las borradas.
+Sobrecorregí: restauré los tres. Recién al medir **paso por paso en los
+dos entornos** apareció lo que los datos sostienen:
 
-Es **la tercera vez** que este proyecto mide preprocesado y lo encuentra
-casi todo inútil — el [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)
-probó catorce variantes contra la detección del QR y ninguna rescató una
-foto que cambiar el decodificador no arreglara igual. El patrón vale
-nombrarlo: el preprocesado se siente como progreso y casi nunca lo es, y
-la única forma de saberlo es medir si el dato sale. Todo en el
-[ADR 018](docs/adr/018-el-preprocesado-del-ocr-es-solo-deskew.md).
+| foto de 420 px, borrosa | Windows + `eng` | Linux + `spa` |
+|---|---|---|
+| sin tocar | 0,93 | **0,77** |
+| solo upscale | 0,91 | **0,93** |
+| solo binarise | `cuit=FALSE` · 0,83 | 0,81 |
+| upscale + binarise | 0,74 | **0,70** |
+| **prepare (upscale+deskew)** | **0,91** | **0,93** |
+
+| foto de 1400 px | Windows + `eng` | Linux + `spa` |
+|---|---|---|
+| solo binarise | 0,92 | **0,80** |
+| **prepare (upscale+deskew)** | **0,92** | **0,93** |
+
+**El upscale paga dieciséis puntos donde importa** y cuesta dos en
+Windows. **El deskew** es neutro en confianza y rescata una página a 4
+grados que sin él no se lee. **Binarizar pierde en los dos entornos**, y
+combinado con el upscale es lo peor de las dos columnas — porque
+Tesseract ya binariza por su cuenta, adaptativamente y por región, y un
+umbral global aplicado antes le quita el gris que iba a usar.
+
+Mi primera conclusión tenía razón en Otsu y se equivocaba en el upscale.
+La segunda, al revés. La tercera es la tabla.
+
+Es **la cuarta vez** que este proyecto generaliza desde una sola
+configuración — el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md)
+midió el QR con un solo decodificador y el
+[010](docs/adr/010-dos-motores-para-leer-el-qr.md) lo corrigió. Esta vez
+el error se cometió *mientras se escribía el ADR que lo llamaba un
+patrón*. Lo que lo atrapó no fue más cuidado: fue que CI corriera la
+medición en otra parte. Todo, incluidos los tres intentos, en el
+[ADR 018](docs/adr/018-la-medicion-del-preprocesado-dependia-del-entorno.md).
 
 **El idioma es `spa` en el contenedor y `eng` en una laptop con Windows**,
 y la lectura dice cuál fue. El jar trae `eng` y los nativos de Windows;
@@ -1792,7 +1815,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | ✅ 2 | Upload endpoint + almacenamiento S3, **estrategia QR** (ZXing; el motor de OpenCV se agregó después de medir, [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)) |
 | ✅ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo de la **razón social**. Neto e IVA quedan afuera: son v2, por la decisión de perfil de usuario |
 | ✅ 4 | **Auth real** (sesión en cookie, BCrypt, CSRF), **la API de revisión** (`confirm` con correcciones auditadas) y el **frontend** (upload, cámara que lee el QR en vivo, formulario con origen por campo, historial y export). Se partió en tres y las dos mitades de backend fueron primero, porque desbloqueaban los criterios 7 y 4 |
-| ✅ 5 | Export CSV con formato Excel-AR, `PUT /jobs/:id/confirm` — que es la puerta al historial exportable — y **Tesseract + OpenCV para comprobantes sin QR**. Del preprocesado planeado quedó un tercio, y eso es una medición y no un recorte: ver [ADR 018](docs/adr/018-el-preprocesado-del-ocr-es-solo-deskew.md) |
+| ✅ 5 | Export CSV con formato Excel-AR, `PUT /jobs/:id/confirm` — que es la puerta al historial exportable — y **Tesseract + OpenCV para comprobantes sin QR**. Del preprocesado planeado quedó un tercio, y eso es una medición y no un recorte: ver [ADR 018](docs/adr/018-la-medicion-del-preprocesado-dependia-del-entorno.md) |
 | ⬜ 6 (buffer) | Timebox de medio día al decodificado por mosaicos en el servidor, pulido |
 
 > **El export se adelantó a la semana 4.** El roadmap lo tenía después del

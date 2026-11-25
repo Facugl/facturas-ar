@@ -1,7 +1,7 @@
 # 002 — Tesseract y no PaddleOCR
 
 **Estado:** aceptada · implementada
-**Implementada en:** [ADR 018](018-el-preprocesado-del-ocr-es-solo-deskew.md), que mide qué preprocesado paga y borra dos tercios del que estaba planeado
+**Implementada en:** [ADR 018](018-la-medicion-del-preprocesado-dependia-del-entorno.md), que mide qué preprocesado paga — y descubre que la respuesta depende del idioma y del sistema operativo
 **Fecha:** 2026-10-17 · revisada 2026-10-22
 
 ## Contexto

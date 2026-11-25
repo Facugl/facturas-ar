@@ -140,7 +140,7 @@ class TesseractOcrEngineTest {
                 "TOTAL: 18450,00")).orElseThrow();
 
         assertThat(reading.confidence()).isBetween(0.0, 1.0).isGreaterThan(0.0);
-        System.out.printf("confianza sobre texto limpio: %.2f (%s)%n",
+        System.out.printf(java.util.Locale.ROOT, "confianza sobre texto limpio: %.2f (%s)%n",
                 reading.confidence(), reading.language());
     }
 
@@ -163,7 +163,7 @@ class TesseractOcrEngineTest {
         // is the stronger version of the same claim.
         double noisyConfidence = degraded.map(OcrEngine.Reading::confidence).orElse(0.0);
         assertThat(noisyConfidence).isLessThan(clean.confidence());
-        System.out.printf("limpio %.2f vs con ruido %.2f%n",
+        System.out.printf(java.util.Locale.ROOT, "limpio %.2f vs con ruido %.2f%n",
                 clean.confidence(), noisyConfidence);
     }
 

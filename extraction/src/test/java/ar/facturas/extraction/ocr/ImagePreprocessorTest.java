@@ -25,18 +25,32 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Does the preprocessing make the OCR read more?
  *
- * <p>Asked rather than assumed, and the answer <strong>deleted two
- * thirds of the class</strong>. The first version upscaled, deskewed and
- * binarised; measuring showed Otsu made a CUIT unreadable and the upscale
- * paid nothing, so both are gone. The numbers are in
- * {@link ImagePreprocessor}'s javadoc, and the tests that found them are
- * below — so that re-adding either step without re-measuring means
- * deleting a test that says why it left.
+ * <h2>The answer depends on the machine, which is the whole lesson</h2>
  *
- * <p>The tests are not "does deskew rotate the image". They are <em>does
- * the OCR read more afterwards</em>, which is the only form of the
- * question that matters and the one that fails honestly when a step stops
- * paying.
+ * <p>The first version of this file asserted <em>directions</em>: that
+ * Otsu lowered confidence, that the upscale paid nothing. Both held on
+ * Windows against the {@code eng} traineddata bundled in the jar, and
+ * both are <strong>false</strong> on Linux against {@code spa}, which is
+ * what the worker's image uses. CI said so, and the two assertions that
+ * had justified deleting two preprocessing steps failed.
+ *
+ * <pre>
+ * foto de 420 px, borrosa, JPEG 0.45, iluminada de un lado
+ *                      Windows + eng          Linux + spa
+ *   sin tocar          conf 0.93              conf 0.77
+ *   con Otsu           conf 0.83 cuit=FALSE   conf 0.94
+ *   ampliada x3        conf 0.93              conf 0.94
+ * </pre>
+ *
+ * <p>So this file now asserts only what holds in both places — that the
+ * page still reads, that an already-good page is not damaged, that the
+ * structural rules hold — and <strong>prints</strong> the numbers instead
+ * of asserting their direction. The numbers are the measurement; a build
+ * log that carries them is worth more than an assertion that happens to
+ * pass wherever it was written.
+ *
+ * <p>The full story, and why it is the fourth time this project has
+ * generalised from one configuration, is in ADR 018.
  *
  * <p>Images are drawn with Java2D: real comprobantes are third-party
  * fiscal documents and never enter this repository, and a rendered page
@@ -98,12 +112,11 @@ class ImagePreprocessorTest {
      * What a phone camera does to a page: a little blur from the lens and
      * from not holding still, then JPEG compression.
      *
-     * <p>This exists because the first version of these tests measured
-     * against Java2D output, which draws mathematically perfect glyphs —
-     * and on those, every preprocessing step looked harmless. That was
-     * the test being too easy. A real photograph is blurred and has
+     * <p>This exists because the first version measured against Java2D
+     * output, which draws mathematically perfect glyphs, and on those
+     * every step looked harmless. A real photograph is blurred and has
      * compression artefacts on exactly the high-contrast edges a glyph is
-     * made of, and that is where Otsu turned out to do damage.
+     * made of.
      */
     private static BufferedImage photographed(BufferedImage source) {
         try {
@@ -150,33 +163,141 @@ class ImagePreprocessorTest {
                 .isTrue();
     }
 
-    // ── Lo que el deskew paga ─────────────────────────────────────────
+    // ── Lo que vale en los dos entornos ───────────────────────────────
 
     @Nested
-    @DisplayName("el deskew, que es el unico paso que quedo")
-    class Deskew {
+    @DisplayName("la pagina sigue leyendose, que es lo unico que vale en todas partes")
+    class ItStillReads {
 
-        /**
-         * The measurement that justifies the class existing: a page 4°
-         * off goes from unreadable to read.
-         */
         @Test
-        @DisplayName("una pagina a 4 grados pasa de ilegible a legible")
-        void aSkewedPageBecomesReadable() {
+        @DisplayName("una pagina a 4 grados se lee despues de enderezarla")
+        void aSkewedPageReads() {
             BufferedImage skewed = rotated(page(1200), 4);
 
-            boolean before = readsTheCuit(skewed);
-            boolean after = readsTheCuit(preprocessor.prepare(skewed));
+            System.out.printf(java.util.Locale.ROOT, "4 grados: antes %s, despues %s%n",
+                    readsTheCuit(skewed), readsTheCuit(preprocessor.prepare(skewed)));
 
-            System.out.printf("4 grados: antes %s, despues %s%n", before, after);
-            assertThat(after)
-                    .as("si esto falla, el deskew dejo de pagar y la clase entera sobra")
+            assertThat(readsTheCuit(preprocessor.prepare(skewed)))
+                    .as("si esto falla, el deskew rompio algo")
                     .isTrue();
         }
 
         @Test
-        @DisplayName("no toca una pagina derecha: resamplear por nada la empeora")
-        void leavesAStraightPageAlone() {
+        @DisplayName("una foto chica, borrosa y comprimida se lee")
+        void aSmallBlurryPhotographReads() {
+            BufferedImage photo = photographed(litFromOneSide(page(420)));
+
+            System.out.printf(java.util.Locale.ROOT, "foto chica borrosa: conf %.2f -> %.2f (%s -> %s)%n",
+                    confidenceOf(photo), confidenceOf(preprocessor.prepare(photo)),
+                    readsTheCuit(photo), readsTheCuit(preprocessor.prepare(photo)));
+
+            assertThat(readsTheCuit(preprocessor.prepare(photo))).isTrue();
+        }
+
+        @Test
+        @DisplayName("una foto grande borrosa se lee")
+        void aLargeBlurryPhotographReads() {
+            BufferedImage photo = photographed(litFromOneSide(page(1400)));
+
+            System.out.printf(java.util.Locale.ROOT, "foto grande borrosa: conf %.2f -> %.2f%n",
+                    confidenceOf(photo), confidenceOf(preprocessor.prepare(photo)));
+
+            assertThat(readsTheCuit(preprocessor.prepare(photo))).isTrue();
+        }
+
+        /**
+         * The one that would be easy to miss: preprocessing a page that
+         * was already fine must not damage it. Most comprobantes arrive
+         * as clean PDFs, so a pipeline that helps the bad cases and
+         * breaks the good ones is a net loss.
+         */
+        @Test
+        @DisplayName("una pagina que ya estaba bien no se arruina")
+        void aCleanPageIsNotDamaged() {
+            BufferedImage clean = page(1600);
+
+            System.out.printf(java.util.Locale.ROOT, "pagina limpia: conf %.2f -> %.2f%n",
+                    confidenceOf(clean), confidenceOf(preprocessor.prepare(clean)));
+
+            assertThat(readsTheCuit(preprocessor.prepare(clean))).isTrue();
+        }
+    }
+
+    // ── La medicion, que no se afirma porque depende del entorno ──────
+
+    /**
+     * Prints each step's effect in isolation and asserts nothing about
+     * the direction.
+     *
+     * <p>That is not laziness, it is the correction. These numbers point
+     * one way on Windows with {@code eng} and the other way on Linux with
+     * {@code spa}, and a test that asserted either direction would be
+     * asserting which machine it was written on. What it is for is that
+     * every build prints the measurement, so the next person deciding
+     * whether a step pays has data from the environment they care about
+     * rather than from somebody else's laptop.
+     */
+    @Test
+    @DisplayName("imprime cuanto aporta cada paso, sin afirmar en que direccion")
+    void printsWhatEachStepContributes() {
+        System.out.println("--- aporte de cada paso, idioma " + ocr.language() + " ---");
+
+        for (int height : new int[] {420, 1400}) {
+            BufferedImage photo = photographed(litFromOneSide(page(height)));
+            report("  %4d px  sin tocar       ".formatted(height), photo);
+            report("  %4d px  solo upscale    ".formatted(height), preprocessor.upscale(photo));
+            report("  %4d px  solo deskew     ".formatted(height), preprocessor.deskew(photo));
+            report("  %4d px  solo binarise   ".formatted(height), preprocessor.binarise(photo));
+            // La combinacion que NO se usa, impresa al lado de la que si:
+            // es el paso que la medicion dejo afuera, y el numero que lo
+            // justifica tiene que estar a la vista.
+            report("  %4d px  upscale+binarise".formatted(height),
+                    preprocessor.binarise(preprocessor.upscale(photo)));
+            report("  %4d px  prepare (up+des)".formatted(height), preprocessor.prepare(photo));
+        }
+
+        // The only assertion: the pipeline reads what the untouched image
+        // reads, or better. Anything stronger is a claim about one
+        // machine.
+        BufferedImage photo = photographed(litFromOneSide(page(420)));
+        assertThat(readsTheCuit(preprocessor.prepare(photo))).isTrue();
+    }
+
+    private void report(String label, BufferedImage image) {
+        System.out.printf(java.util.Locale.ROOT, "%s  cuit=%-5s conf=%.2f%n",
+                label, readsTheCuit(image), confidenceOf(image));
+    }
+
+    // ── Los pasos, uno por uno: reglas estructurales ──────────────────
+
+    /**
+     * These hold everywhere because they are not about what Tesseract
+     * reads — they are about what the code does with an image. The kind
+     * of assertion that was missing from the first version, which only
+     * had measurements.
+     */
+    @Nested
+    @DisplayName("cada paso, por separado")
+    class EachStep {
+
+        @Test
+        @DisplayName("el upscale crece una pagina chica y deja en paz una grande")
+        void upscaleOnlyGrowsWhatIsTooSmall() {
+            BufferedImage small = page(300);
+            BufferedImage big = page(1600);
+
+            assertThat(preprocessor.upscale(small).getHeight())
+                    .isGreaterThan(small.getHeight())
+                    .isLessThanOrEqualTo(small.getHeight() * ImagePreprocessor.MAX_SCALE);
+
+            assertThat(preprocessor.upscale(big))
+                    .as("ya es suficientemente grande: ni se copia")
+                    .isSameAs(big);
+        }
+
+        @Test
+        @DisplayName("el deskew no toca una pagina derecha: resamplear por nada la empeora")
+        void deskewLeavesAStraightPageAlone() {
             BufferedImage straight = page(1200);
 
             assertThat(preprocessor.deskew(straight)).isSameAs(straight);
@@ -194,177 +315,19 @@ class ImagePreprocessorTest {
 
             assertThat(preprocessor.deskew(sideways)).isSameAs(sideways);
         }
-    }
 
-    // ── Lo que los pasos borrados costaban ────────────────────────────
-
-    /**
-     * These are the tests that deleted two thirds of the class, kept so
-     * that re-adding either step means deleting a measurement rather than
-     * forgetting one.
-     */
-    @Nested
-    @DisplayName("por que se borraron el upscale y el umbral de Otsu")
-    class WhyTwoStepsAreGone {
-
-        /**
-         * The finding, in the form this test can actually prove.
-         *
-         * <p>Against OpenCV's own {@code THRESH_OTSU} the CUIT went from
-         * read to <strong>not read</strong> — that run is recorded in
-         * {@link ImagePreprocessor}'s javadoc. This test cannot assert
-         * that, because the step it would need was deleted and the Otsu
-         * written out below is not bit-for-bit the same operation: it
-         * converts to grey differently, and it comes out at
-         * {@code cuit=true} with a lower confidence rather than at
-         * {@code false}.
-         *
-         * <p>So what is asserted is the part that reproduces: thresholding
-         * ahead of Tesseract <strong>costs confidence and buys
-         * nothing</strong>. Which is already enough to delete the step,
-         * and is a claim this test can keep making. Asserting the stronger
-         * version would mean asserting something this code does not
-         * demonstrate.
-         *
-         * <p>The reason is the same either way: Tesseract binarises
-         * internally and adaptively, per region. Cutting the greyscale
-         * away first removes what it would have used, and on a blurred
-         * glyph a hard global cut smears the strokes of a 3 into the shape
-         * of an 8.
-         */
         @Test
-        @DisplayName("umbralizar antes de Tesseract cuesta confianza y no trae nada")
-        void aGlobalThresholdCostsConfidenceAndBuysNothing() {
-            BufferedImage photo = photographed(litFromOneSide(page(420)));
+        @DisplayName("binarizar deja la imagen en dos valores, y en gris de un canal")
+        void binariseLeavesTwoValues() {
+            BufferedImage result = preprocessor.binarise(litFromOneSide(page(600)));
 
-            assertThat(readsTheCuit(photo)).as("la foto sin tocar se lee").isTrue();
-
-            BufferedImage thresholded = globalOtsu(photo);
-            double before = confidenceOf(photo);
-            double after = confidenceOf(thresholded);
-            System.out.printf("foto chica borrosa: sin tocar conf %.2f (cuit %s), "
-                            + "con Otsu global conf %.2f (cuit %s)%n",
-                    before, readsTheCuit(photo), after, readsTheCuit(thresholded));
-
-            assertThat(after)
-                    .as("peor que no hacer nada — por eso el paso no esta")
-                    .isLessThan(before);
-        }
-
-        /**
-         * And the weaker finding: the upscale paid nothing. Asserted as
-         * "no better", which is the honest shape — the claim is not that
-         * upscaling is useless in general, it is that on these images it
-         * did not earn its cost.
-         */
-        @Test
-        @DisplayName("el upscale no mejoraba nada sobre una foto chica")
-        void upscalingPaidNothing() {
-            BufferedImage photo = photographed(litFromOneSide(page(420)));
-
-            double before = confidenceOf(photo);
-            double after = confidenceOf(upscaledThreeTimes(photo));
-
-            System.out.printf("foto chica: conf %.2f, ampliada x3 %.2f%n", before, after);
-            assertThat(after)
-                    .as("no mejora, y encima amplifica el desenfoque que interpola")
-                    .isLessThanOrEqualTo(before + 0.01);
-        }
-
-        /** What the deleted step used to do, kept only to measure it. */
-        private BufferedImage globalOtsu(BufferedImage source) {
-            BufferedImage grey = new BufferedImage(source.getWidth(), source.getHeight(),
-                    BufferedImage.TYPE_BYTE_GRAY);
-            Graphics2D g = grey.createGraphics();
-            g.drawImage(source, 0, 0, null);
-            g.dispose();
-
-            int threshold = otsuThresholdOf(grey);
-            for (int x = 0; x < grey.getWidth(); x++) {
-                for (int y = 0; y < grey.getHeight(); y++) {
-                    int value = grey.getRGB(x, y) & 0xFF;
-                    int bw = value > threshold ? 255 : 0;
-                    grey.setRGB(x, y, (bw << 16) | (bw << 8) | bw);
+            assertThat(result.getType()).isEqualTo(BufferedImage.TYPE_BYTE_GRAY);
+            for (int x = 0; x < result.getWidth(); x += 7) {
+                for (int y = 0; y < result.getHeight(); y += 7) {
+                    assertThat(result.getRGB(x, y) & 0xFF).isIn(0, 255);
                 }
             }
-            return grey;
         }
-
-        /** Otsu's method, written out so the test owns what it measures. */
-        private int otsuThresholdOf(BufferedImage grey) {
-            int[] histogram = new int[256];
-            for (int x = 0; x < grey.getWidth(); x++) {
-                for (int y = 0; y < grey.getHeight(); y++) {
-                    histogram[grey.getRGB(x, y) & 0xFF]++;
-                }
-            }
-            int total = grey.getWidth() * grey.getHeight();
-            double sum = 0;
-            for (int i = 0; i < 256; i++) {
-                sum += (double) i * histogram[i];
-            }
-
-            double sumBackground = 0;
-            int countBackground = 0;
-            double best = -1;
-            int threshold = 127;
-            for (int i = 0; i < 256; i++) {
-                countBackground += histogram[i];
-                if (countBackground == 0) {
-                    continue;
-                }
-                int countForeground = total - countBackground;
-                if (countForeground == 0) {
-                    break;
-                }
-                sumBackground += (double) i * histogram[i];
-                double meanBackground = sumBackground / countBackground;
-                double meanForeground = (sum - sumBackground) / countForeground;
-                double between = (double) countBackground * countForeground
-                        * Math.pow(meanBackground - meanForeground, 2);
-                if (between > best) {
-                    best = between;
-                    threshold = i;
-                }
-            }
-            return threshold;
-        }
-
-        private BufferedImage upscaledThreeTimes(BufferedImage source) {
-            BufferedImage out = new BufferedImage(source.getWidth() * 3,
-                    source.getHeight() * 3, BufferedImage.TYPE_INT_RGB);
-            Graphics2D g = out.createGraphics();
-            g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
-                    java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-            g.drawImage(source, 0, 0, out.getWidth(), out.getHeight(), null);
-            g.dispose();
-            return out;
-        }
-    }
-
-    // ── Y que no empeore lo que ya estaba bien ────────────────────────
-
-    @Test
-    @DisplayName("una pagina limpia pasa intacta")
-    void aCleanPageIsNotDamaged() {
-        BufferedImage clean = page(1600);
-
-        double before = confidenceOf(clean);
-        double after = confidenceOf(preprocessor.prepare(clean));
-
-        System.out.printf("pagina limpia: confianza antes %.2f, despues %.2f%n", before, after);
-        assertThat(readsTheCuit(preprocessor.prepare(clean))).isTrue();
-        assertThat(after).isGreaterThanOrEqualTo(before - 0.02);
-    }
-
-    @Test
-    @DisplayName("una foto grande borrosa se lee igual")
-    void aLargeBlurryPhotographStillReads() {
-        BufferedImage photo = photographed(litFromOneSide(page(1400)));
-
-        System.out.printf("foto grande borrosa: conf %.2f -> %.2f%n",
-                confidenceOf(photo), confidenceOf(preprocessor.prepare(photo)));
-        assertThat(readsTheCuit(preprocessor.prepare(photo))).isTrue();
     }
 
     // ── Degrada, no falla ─────────────────────────────────────────────

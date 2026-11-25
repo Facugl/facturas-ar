@@ -27,7 +27,7 @@ pierde rápido, y es lo único que sirve cuando hay que revisarla.
 | [015](015-sesion-con-cookie-y-no-un-token.md) | **Sesión con cookie, y no un token** | Aceptada · implementada |
 | [016](016-el-servidor-calcula-el-diff-de-la-revision.md) | **El servidor calcula el diff de la revisión** | Aceptada · implementada |
 | [017](017-el-frontend-va-en-el-mismo-origen.md) | **El frontend va en el mismo origen que la API** | Aceptada · implementada |
-| [018](018-el-preprocesado-del-ocr-es-solo-deskew.md) | **El preprocesado del OCR es solo deskew** | Aceptada · implementada |
+| [018](018-la-medicion-del-preprocesado-dependia-del-entorno.md) | **La medición del preprocesado dependía del entorno** | Aceptada · implementada |
 
 Hay una cadena de correcciones acá, y vale leerla en orden. El
 [009](009-deteccion-del-qr-en-el-cliente.md) revisa al
@@ -39,12 +39,18 @@ publicado con la premisa marcada como refutada en vez de reescrito,
 porque el error —dar por medido lo que se probó una sola vez— es la parte
 que conviene no borrar.
 
-Y el [018](018-el-preprocesado-del-ocr-es-solo-deskew.md) cierra la misma
-cadena por tercera vez, ahora sobre el OCR: de los tres pasos de
-preprocesado que toda guía recomienda, uno rompía lecturas y otro no
-pagaba nada. El patrón vale nombrarlo — **el preprocesado se siente como
-progreso y casi nunca lo es** — y la única forma de saberlo es medir si
-el dato sale, no mirar la imagen intermedia.
+Y el [018](018-la-medicion-del-preprocesado-dependia-del-entorno.md) agrega
+el cuarto eslabón, que es el más incómodo: midió el preprocesado del OCR
+con **un** idioma en **un** sistema operativo, concluyó que dos de los
+tres pasos no servían, y los borró. Después CI corrió la misma medición
+en Linux con `spa` — el idioma que corre en producción — y dio lo
+contrario en los tres. Los pasos volvieron.
+
+El patrón ya tiene nombre a esta altura: **una medición hecha en una sola
+configuración no es una medición**. Lo notable es que el 018 cometió ese
+error *mientras escribía el ADR que lo llamaba un patrón*, lo cual dice
+algo sobre lo poco que sirve saberlo. Lo que sirvió fue tener un segundo
+entorno que corriera los números solo.
 
 **Formato:** contexto, decisión, consecuencias, alternativas descartadas.
 Una página. Si no entra, la decisión probablemente sean dos.

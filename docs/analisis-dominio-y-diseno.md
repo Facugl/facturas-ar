@@ -671,7 +671,7 @@ Escritos. Ver [docs/adr/](adr/):
 | [015](adr/015-sesion-con-cookie-y-no-un-token.md) | Por qué la sesión va en una cookie y no en un JWT — y las dos cosas que hicieron que un endpoint público contestara 401 |
 | [016](adr/016-el-servidor-calcula-el-diff-de-la-revision.md) | Por qué el cliente manda valores y no cambios — y por qué el pedido es un mapa y no un record con nueve campos nullables |
 | [017](adr/017-el-frontend-va-en-el-mismo-origen.md) | Por qué el frontend proxea la API en vez de hablarle por CORS — y por qué la cámara exige el QR pero el selector de archivos no |
-| [018](adr/018-el-preprocesado-del-ocr-es-solo-deskew.md) | Por qué el preprocesado del OCR quedó en un solo paso — medir que Otsu hacía ilegible un CUIT |
+| [018](adr/018-la-medicion-del-preprocesado-dependia-del-entorno.md) | Por qué la medición del preprocesado del OCR dio lo contrario en Windows y en Linux — y el ADR que se equivocó advirtiendo sobre ese mismo error |
 
 ---
 
