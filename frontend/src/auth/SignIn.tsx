@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import { ApiError } from '../api/client'
+import { ApiError, Unauthorized } from '../api/client'
 import { useRegister, useSignIn } from '../api/hooks'
 import { Notice } from '../ui/Bits'
 
@@ -112,12 +112,24 @@ export function SignIn() {
  * stuffing list. The screen has to be just as careful.
  */
 function messageFor(error: unknown): string {
+  // `Unauthorized` and not `ApiError`, and that distinction was a bug.
+  //
+  // The client turns a 401 into its own type before an `ApiError` is ever
+  // constructed, so a `status === 401` check inside the `ApiError` branch
+  // — which is what this had — can never run. A wrong password fell
+  // through to the bottom and told the person **the API was
+  // unreachable**, which sends them to check their internet connection
+  // instead of their password.
+  //
+  // Found the first time anybody opened the screen. Twenty-two frontend
+  // tests and none of them covered this mapping; `SignIn.test.tsx` now
+  // does.
+  if (error instanceof Unauthorized) {
+    return 'Email o contraseña incorrectos.'
+  }
   if (error instanceof ApiError) {
     if (error.status === 409) {
       return 'Ese email ya tiene una cuenta. Probá entrar.'
-    }
-    if (error.status === 401) {
-      return 'Email o contraseña incorrectos.'
     }
     return error.message
   }
