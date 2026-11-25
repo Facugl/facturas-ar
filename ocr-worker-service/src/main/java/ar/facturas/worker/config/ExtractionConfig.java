@@ -2,6 +2,7 @@ package ar.facturas.worker.config;
 
 import ar.facturas.extraction.ExtractionOrchestrator;
 import ar.facturas.extraction.ExtractionStrategy;
+import ar.facturas.extraction.ocr.OcrExtractionStrategy;
 import ar.facturas.extraction.pdftext.PdfTextExtractionStrategy;
 import ar.facturas.extraction.qr.QrExtractionStrategy;
 import org.springframework.context.annotation.Bean;
@@ -33,12 +34,27 @@ public class ExtractionConfig {
     }
 
     /**
+     * The third and last, and the expensive one.
+     *
+     * <p>It declines everything the other two covered — a PDF with
+     * readable text — and it declines itself when Tesseract is not
+     * installed, which is why the service name no longer matches what it
+     * does on a machine without the native library. See
+     * {@code OcrExtractionStrategy}, which is also the only strategy that
+     * can report being unavailable.
+     */
+    @Bean
+    OcrExtractionStrategy ocrExtractionStrategy() {
+        return new OcrExtractionStrategy();
+    }
+
+    /**
      * Takes every registered strategy. The orchestrator sorts them by
      * the priority of their source, so the order here does not matter
      * and cannot be got wrong.
      *
-     * <p>The QR and the PDF's embedded text are registered. OCR joins
-     * the list when it is written, and nothing else has to change.
+     * <p>All three are registered now. The claim that adding one changes
+     * nothing else held: OCR arrived as a class and a line here.
      */
     @Bean
     ExtractionOrchestrator extractionOrchestrator(List<ExtractionStrategy> strategies) {

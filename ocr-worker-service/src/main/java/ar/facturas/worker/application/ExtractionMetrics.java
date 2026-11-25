@@ -1,7 +1,9 @@
 package ar.facturas.worker.application;
 
 import ar.facturas.extraction.ExtractionResult;
+import ar.facturas.domain.enums.FieldSource;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +39,7 @@ public class ExtractionMetrics {
     static final String DUPLICATE_DELIVERY = "invoice.job.duplicate.delivery";
     static final String QR_DETECTION = "invoice.qr.detection";
     static final String FIELD_SOURCE = "invoice.extraction.source";
+    static final String OCR_CONFIDENCE = "invoice.ocr.confidence";
 
     private final MeterRegistry registry;
 
@@ -115,5 +118,42 @@ public class ExtractionMetrics {
                     .register(registry)
                     .increment();
         }
+
+        recordOcrConfidence(result);
+    }
+
+    /**
+     * How sure the OCR was, when the OCR ran at all.
+     *
+     * <p>A summary and not a gauge: a gauge holds the last value, and the
+     * last comprobante is not the question. What is being asked is
+     * <em>what the distribution looks like</em> — whether the OCR is
+     * reading clean scans at 0.9 or guessing at photographs around 0.4 —
+     * and a distribution needs percentiles.
+     *
+     * <p>Only recorded when something came from OCR. Recording a zero for
+     * every comprobante whose QR decoded would bury the real readings
+     * under a pile of zeros from documents the OCR never touched, which
+     * is the version of this metric that looks fine and says nothing.
+     *
+     * <p>Confidence is Tesseract's own opinion of its output, not a
+     * probability that the text is right. Worth being precise about,
+     * because the number is going on a dashboard where somebody will read
+     * it as accuracy.
+     */
+    private void recordOcrConfidence(ExtractionResult result) {
+        var fromOcr = result.fields().values().stream()
+                .filter(value -> value.source() == FieldSource.OCR)
+                .mapToDouble(ar.facturas.extraction.ExtractedValue::confidence)
+                .average();
+
+        if (fromOcr.isEmpty()) {
+            return;
+        }
+        DistributionSummary.builder(OCR_CONFIDENCE)
+                .description("Tesseract's own confidence in what it read, when OCR ran")
+                .publishPercentileHistogram()
+                .register(registry)
+                .record(fromOcr.getAsDouble());
     }
 }

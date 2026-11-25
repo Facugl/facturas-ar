@@ -11,7 +11,7 @@ pierde rápido, y es lo único que sirve cuando hay que revisarla.
 | # | Decisión | Estado |
 |---|---|---|
 | [001](001-db-compartida-sin-evento-de-respuesta.md) | DB compartida, sin evento de respuesta del worker | Aceptada · implementada |
-| [002](002-tesseract-y-no-paddleocr.md) | Tesseract y no PaddleOCR | Aceptada |
+| [002](002-tesseract-y-no-paddleocr.md) | Tesseract y no PaddleOCR | Aceptada · implementada |
 | [003](003-estados-del-job.md) | Los estados del Job y sus transiciones | Aceptada · implementada |
 | [004](004-qr-primero-ocr-de-respaldo.md) | **QR primero, OCR de último recurso** | Aceptada · implementada |
 | [005](005-transactional-outbox.md) | **Transactional outbox para publicar el evento** | Aceptada · implementada |
@@ -27,6 +27,7 @@ pierde rápido, y es lo único que sirve cuando hay que revisarla.
 | [015](015-sesion-con-cookie-y-no-un-token.md) | **Sesión con cookie, y no un token** | Aceptada · implementada |
 | [016](016-el-servidor-calcula-el-diff-de-la-revision.md) | **El servidor calcula el diff de la revisión** | Aceptada · implementada |
 | [017](017-el-frontend-va-en-el-mismo-origen.md) | **El frontend va en el mismo origen que la API** | Aceptada · implementada |
+| [018](018-el-preprocesado-del-ocr-es-solo-deskew.md) | **El preprocesado del OCR es solo deskew** | Aceptada · implementada |
 
 Hay una cadena de correcciones acá, y vale leerla en orden. El
 [009](009-deteccion-del-qr-en-el-cliente.md) revisa al
@@ -37,6 +38,13 @@ había medido con un solo decodificador y concluido de más. El 009 queda
 publicado con la premisa marcada como refutada en vez de reescrito,
 porque el error —dar por medido lo que se probó una sola vez— es la parte
 que conviene no borrar.
+
+Y el [018](018-el-preprocesado-del-ocr-es-solo-deskew.md) cierra la misma
+cadena por tercera vez, ahora sobre el OCR: de los tres pasos de
+preprocesado que toda guía recomienda, uno rompía lecturas y otro no
+pagaba nada. El patrón vale nombrarlo — **el preprocesado se siente como
+progreso y casi nunca lo es** — y la única forma de saberlo es medir si
+el dato sale, no mirar la imagen intermedia.
 
 **Formato:** contexto, decisión, consecuencias, alternativas descartadas.
 Una página. Si no entra, la decisión probablemente sean dos.

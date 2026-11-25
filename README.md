@@ -26,8 +26,8 @@ vuelve solo; y todo eso se mide en Prometheus.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, **autenticación real con sesión en cookie y CSRF**, **revisión con correcciones por campo auditadas**, **frontend React con cámara que lee el QR en vivo, formulario de revisión, historial y export**, stack dockerizado, 423 tests (401 de backend —84 contra Postgres, RabbitMQ y Redis reales— y 22 de frontend), CI |
-| ⬜ **Falta** | **OCR de respaldo** para comprobantes sin QR (Tess4J + OpenCV), que es la mitad de la Fase 1 que queda. Y volver a medir el criterio 2 ahora que hay cámara: el 85% sigue sin reponerse |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, **autenticación real con sesión en cookie y CSRF**, **revisión con correcciones por campo auditadas**, **frontend React con cámara que lee el QR en vivo, formulario de revisión, historial y export**, **OCR de respaldo con Tesseract para comprobantes sin QR**, stack dockerizado, 453 tests (431 de backend —84 contra Postgres, RabbitMQ y Redis reales— y 22 de frontend), CI |
+| ⬜ **Falta** | **Medir** — el criterio 2 (cuántas fotos reales decodifican en el navegador) y el OCR contra escaneos reales. Las dos necesitan comprobantes que no están en el repo, y ninguna se declara cumplida sin datos |
 
 **La API hoy:** `POST /auth/register` · `POST /auth/login` ·
 `POST /auth/logout` · `GET /auth/me` · `POST /documents` · `GET /jobs` ·
@@ -352,7 +352,7 @@ tiene. El costo es CSRF, que se maneja y no se apaga. Ver
 
 1. **PDF de factura electrónica con QR legible → los 12 campos del QR correctos, en el 100% de los casos** de un set de al menos 20 comprobantes reales variados. No es un umbral optimista: el QR es un dato estructurado, o se lee o no se lee.
 2. **Foto de celular:** el QR se detecta **en el navegador, antes de subir**, y la foto se acepta solo si decodificó. Criterio verificable en lugar de un porcentaje: no hay foto aceptada sin QR leído. *(🔶 **Construido, sin medir.** La cámara lee en vivo con `BarcodeDetector` y `jsQR` de respaldo, y el obturador espera al QR. Pero el obturador espera **solo en la cámara**: el selector de archivos no, porque el criterio 3 pide que un comprobante sin QR entre igual — ver [ADR 017](docs/adr/017-el-frontend-va-en-el-mismo-origen.md). Cuántas fotos reales decodifican en el navegador **no está medido**, y hasta que lo esté este criterio no se declara cumplido: es justo el error que el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md) cometió una vez.)*
-3. Comprobante **sin** QR → degrada a texto/OCR sin romperse; el usuario puede completar a mano. *(🔶 La mitad del servidor está: verificado contra el stack real subiendo un PDF sin QR, completando ocho campos a mano y obteniendo una línea CSV válida de un comprobante del que la cascada no leyó nada. El OCR de respaldo y la pantalla siguen pendientes.)*
+3. Comprobante **sin** QR → degrada a texto/OCR sin romperse; el usuario puede completar a mano. *(✅ **Cumplido.** Verificado contra el stack real de dos formas: subiendo un PDF sin nada legible y completando ocho campos a mano hasta obtener una línea CSV válida, y subiendo un JPEG de un comprobante sin QR del que **el OCR leyó el CUIT y la razón social solo**, con `source: OCR` y confianza 0,94. Lo que falta no es código: es medirlo contra escaneos reales.)*
 4. Usuario puede corregir cualquier campo y confirmar; cada corrección queda registrada. *(✅ **Cumplido en la API**, falta la pantalla. `field_corrections` llevaba **cero filas desde la primera migración** —una apuesta del día 1— y ahora se escribe en cada revisión, con el valor viejo leído de la base y no declarado por el cliente. El campo corregido además deja de decir que vino del QR. Ver [ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md).)*
 5. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción. Un archivo ilegible o que no es una factura **no es un fallo del sistema**: el formulario sale vacío y el documento queda guardado igual.
 6. Export CSV de un rango de fechas que abre en Excel y Sheets con montos como números y acentos correctos, **sin intervención manual**. *(✅ **Cumplido en los dos**, verificado abriendo el archivo. La vuelta por Excel encontró algo que ningún test podía: el CAE salía como `7,04171E+13`.)*
@@ -378,7 +378,7 @@ Los diagramas se generan con [Archify](https://github.com/tt-a1i/archify) a part
 
 ### Vista de componentes
 
-> Esto ya es el estado real, **incluido el frontend** desde que entró la semana 4. Lo único del diagrama que todavía no existe es el OCR de respaldo dentro del worker.
+> Esto ya es el estado real. Todo lo del diagrama existe, incluido el OCR dentro del worker.
 > Todo lo demás —los dos servicios, la cola, el outbox, el
 > almacenamiento, Redis, Prometheus— está corriendo.
 
@@ -861,7 +861,39 @@ El QR devuelve `tipoCmp` como código numérico de la [tabla oficial de ARCA](ht
 - **OpenCV** (`org.bytedeco:opencv`, compilado con `opencv_contrib`) — el detector de QR de WeChat, que es el que lee las fotos, más el preprocesamiento del OCR. **Juntas, la dependencia más importante del proyecto** ([ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md))
 - Apache PDFBox 3.x — texto embebido (`PDFTextStripper`) y rasterizado de la página para buscar el QR (`PDFRenderer`)
 - Jackson — parseo del JSON del QR (ya viene con Spring Boot)
-- Tess4J 5.x (Tesseract 5.3+ en el contenedor: `tesseract-ocr tesseract-ocr-spa`) — estrategia de último recurso
+- **Tess4J 5.16** (Tesseract 5.5 en el contenedor: `tesseract-ocr tesseract-ocr-spa`) — estrategia de último recurso, **en uso**
+
+**El OCR quedó con un solo paso de preprocesado, y eso es una medición.**
+Estaban escritos los tres que recomienda cualquier guía — ampliar la
+página chica, enderezarla, binarizar con Otsu — y después se midieron
+contra páginas desenfocadas, comprimidas en JPEG 0,45 e iluminadas de un
+lado:
+
+| | |
+|---|---|
+| **Otsu hacía ilegible el CUIT** | No peor: ausente. Tesseract ya binariza por su cuenta y adaptativamente, por región; un umbral global aplicado antes le quita el gris que iba a usar, y sobre un glifo desenfocado un corte duro convierte los trazos de un 3 en la forma de un 8 |
+| **El upscale no pagó nada** | Y la interpolación cúbica sobre una foto borrosa amplifica el desenfoque que interpola |
+| **El deskew sí pagó** | Una página a 4 grados pasa de ilegible a legible, y nunca empeora una derecha porque se niega a tocarla |
+
+Es **la tercera vez** que este proyecto mide preprocesado y lo encuentra
+casi todo inútil — el [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)
+probó catorce variantes contra la detección del QR y ninguna rescató una
+foto que cambiar el decodificador no arreglara igual. El patrón vale
+nombrarlo: el preprocesado se siente como progreso y casi nunca lo es, y
+la única forma de saberlo es medir si el dato sale. Todo en el
+[ADR 018](docs/adr/018-el-preprocesado-del-ocr-es-solo-deskew.md).
+
+**El idioma es `spa` en el contenedor y `eng` en una laptop con Windows**,
+y la lectura dice cuál fue. El jar trae `eng` y los nativos de Windows;
+`spa` son ~15 MB que no van en git, así que lo instala la imagen. Cuánto
+cuesta eso es poco — un CUIT son dígitos y `S.A.` no es palabra de
+diccionario en ningún idioma — pero los acentos sí: `PANADERÍA` contra
+`PANADERIA`. Ningún test puede depender de cuál corrió.
+
+**El OCR reusa el parser del texto embebido**, no tiene reglas propias. Su
+trabajo termina en producir texto; qué forma tiene una razón social ya
+está escrito y testeado. Dos parsers derivarían, y el que se alcanza
+menos seguido derivaría más.
 - Parseo de texto: regex + Java puro, sin librería
 - `@RabbitListener` con `acknowledge-mode: manual` y `prefetch: 1`, ackeando después del commit ([ADR 012](docs/adr/012-una-extraccion-fallida-se-ackea.md))
 
@@ -1118,8 +1150,22 @@ próximo día de trabajo en las reglas de parseo. Se incrementa una vez por
 campo que **efectivamente cambió**, no por campo enviado — si no, mediría
 cómo manda el formulario en vez de cómo anda la extracción.
 
-**Lo que falta:** `invoice.ocr.confidence`, que necesita el OCR. Entra
-con el código que la produce.
+**`invoice.ocr.confidence` también entró**, con el OCR, y es un
+**summary** y no un gauge: un gauge guarda el último valor y el último
+comprobante no es la pregunta. Lo que se quiere saber es cómo se ve la
+distribución —si el OCR lee escaneos limpios en 0,9 o adivina fotos en
+0,4— y una distribución necesita percentiles.
+
+Solo se registra cuando el OCR corrió. Anotar un cero por cada
+comprobante cuyo QR decodificó enterraría las lecturas reales bajo una
+pila de ceros de documentos que el OCR nunca tocó, que es la versión de
+esta métrica que se ve bien y no dice nada.
+
+Y es **la opinión de Tesseract sobre su propia salida**, no la
+probabilidad de que el texto esté bien. Vale ser preciso, porque el número
+va a un dashboard donde alguien lo va a leer como exactitud.
+
+> Ya no falta ninguna de las métricas que este README prometió.
 
 > **Un hallazgo del día que entró la revisión, y era peor que lo que
 > estaba construyendo.** Probando el `curl` de arriba salió un 500 donde
@@ -1594,7 +1640,9 @@ facturas-ar/
 │       ├── pdftext/                # estrategia sobre el texto embebido
 │       ├── pdf/                    # PDFBox: texto y rasterizado de páginas
 │       ├── parser/                 # reglas AFIP sobre texto plano, compartidas con el OCR
-│       └── ocr/                    # Tess4J, preprocesamiento OpenCV — SEMANA 5
+│       └── ocr/                    # OcrEngine + TesseractOcrEngine,
+│                                   #   ImagePreprocessor (solo deskew: ADR 018),
+│                                   #   OcrExtractionStrategy
 │
 ├── upload-api-service/             # runnable Spring Boot app
 │   ├── Dockerfile
@@ -1744,7 +1792,7 @@ Asume ~8-12 hs/semana, desarrollador solo. Estimaciones ya infladas con margen r
 | ✅ 2 | Upload endpoint + almacenamiento S3, **estrategia QR** (ZXing; el motor de OpenCV se agregó después de medir, [ADR 010](docs/adr/010-dos-motores-para-leer-el-qr.md)) |
 | ✅ 3 | Estrategia de texto embebido (PDFBox) + reglas de parseo de la **razón social**. Neto e IVA quedan afuera: son v2, por la decisión de perfil de usuario |
 | ✅ 4 | **Auth real** (sesión en cookie, BCrypt, CSRF), **la API de revisión** (`confirm` con correcciones auditadas) y el **frontend** (upload, cámara que lee el QR en vivo, formulario con origen por campo, historial y export). Se partió en tres y las dos mitades de backend fueron primero, porque desbloqueaban los criterios 7 y 4 |
-| 🔶 5 | ✅ Export CSV con formato Excel-AR y `PUT /jobs/:id/confirm`, que es la puerta al historial exportable. ⬜ Tess4J + OpenCV para comprobantes **sin** QR |
+| ✅ 5 | Export CSV con formato Excel-AR, `PUT /jobs/:id/confirm` — que es la puerta al historial exportable — y **Tesseract + OpenCV para comprobantes sin QR**. Del preprocesado planeado quedó un tercio, y eso es una medición y no un recorte: ver [ADR 018](docs/adr/018-el-preprocesado-del-ocr-es-solo-deskew.md) |
 | ⬜ 6 (buffer) | Timebox de medio día al decodificado por mosaicos en el servidor, pulido |
 
 > **El export se adelantó a la semana 4.** El roadmap lo tenía después del

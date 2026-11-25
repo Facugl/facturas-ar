@@ -164,6 +164,24 @@ public class ExtractComprobante {
                                 result.overallConfidence().orElse(null));
                         log.info("Job {} extracted: {} fields, qr={}",
                                 jobId, result.fields().size(), result.qrDetected());
+                        // The anomalies, which until now nobody read.
+                        //
+                        // Every strategy has been building this list since
+                        // Fase 1 and it was discarded at the end of the
+                        // pipeline — found when the OCR strategy added a
+                        // note to it and the note went nowhere. They are
+                        // not failures: "OCR confidence 0.94 (spa, 1
+                        // page)", "the PDF has text but no razón social
+                        // could be identified in it". That second one is
+                        // the dataset that says which layouts the parsing
+                        // rules do not cover, and it was being thrown away.
+                        //
+                        // One line, at info and with the jobId, so it
+                        // lands in the structured logs next to everything
+                        // else about that job.
+                        if (!result.anomalies().isEmpty()) {
+                            log.info("Job {} extraction notes: {}", jobId, result.anomalies());
+                        }
                         return "extracted";
                     });
 

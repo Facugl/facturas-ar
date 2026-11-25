@@ -72,19 +72,37 @@ RUN java -Djarmode=tools -jar app.jar extract --layers --launcher --destination 
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 
-# curl para el HEALTHCHECK y para diagnosticar desde adentro.
+# curl para el HEALTHCHECK, y Tesseract para el OCR.
 #
-# Todavía SIN tesseract-ocr. El README dice que esta imagen lo instala, y
-# lo va a hacer — pero el OCR es la semana 5 y Tess4J no está en el
-# classpath, así que hoy serían ~100 MB de binarios que nada invoca. Entra
-# con el código que lo usa.
+# `tesseract-ocr` es el binario nativo que Tess4J invoca por JNI; sin él
+# la cascada sigue funcionando y la estrategia de OCR se declara no
+# disponible, que es distinto de "no pude leer el documento" y se ve en
+# las anomalías del job.
+#
+# `tesseract-ocr-spa` es la parte que importa de verdad y la razón de que
+# esto sea apt y no un archivo en el repo: el `spa.traineddata` son ~15 MB
+# de binario que no van en git. El jar de Tess4J trae `eng`, así que sin
+# este paquete el worker leería comprobantes argentinos con el modelo de
+# inglés. Cuánto cuesta eso es menos de lo que parece —un CUIT son
+# dígitos, y "S.A." no es palabra de diccionario en ningún idioma— pero
+# los acentos sí: PANADERÍA contra PANADERIA.
+#
+# TESSDATA_PREFIX es cómo TesseractOcrEngine encuentra esto sin saber la
+# ruta. Si apunta mal, el motor cae al `eng` empaquetado en el jar en vez
+# de quedarse sin OCR: un error de deploy degrada el resultado, no lo
+# elimina.
 #
 # OpenCV no necesita apt: bytedeco empaqueta los .so en el jar, y acá se
 # compila en Linux, donde entran los de linux-x86_64 y no los de Windows
 # (que cuelgan de un perfil que acá no se activa).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl \
+ && apt-get install -y --no-install-recommends \
+      curl \
+      tesseract-ocr \
+      tesseract-ocr-spa \
  && rm -rf /var/lib/apt/lists/*
+
+ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 
 # Usuario sin privilegios. Por defecto los contenedores corren como root,
 # y si alguien escapa del proceso, lo hace siendo root.

@@ -24,7 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -36,6 +36,17 @@ public class JobController {
 
     /** A page bigger than this is a timeout waiting to happen. */
     private static final int MAX_PAGE_SIZE = 100;
+
+    /**
+     * The zone a date means, when the date has to become an instant.
+     *
+     * <p>Fixed rather than {@code ZoneId.systemDefault()}: a container
+     * runs in UTC unless somebody sets {@code TZ}, so the default would
+     * silently shift every day boundary by three hours in production
+     * while being right on a developer's laptop. For a product used in
+     * one country the zone is part of the domain.
+     */
+    private static final ZoneId ZONE = ZoneId.of("America/Argentina/Buenos_Aires");
 
     private final JobRepository jobs;
     private final ExtractedInvoiceDataRepository extractedData;
@@ -92,6 +103,28 @@ public class JobController {
      * would mean invalidating on both, keyed per user and per page, to
      * save a query nobody is making in a loop.
      *
+     * <h2>A day is an Argentine day</h2>
+     *
+     * <p>{@code uploaded_at} is an instant and {@code from}/{@code to}
+     * are dates, so something has to say which zone turns one into the
+     * other. It is {@link #ZONE}, fixed, and that is a decision rather
+     * than a default.
+     *
+     * <p>Found by a failing test at 23:45 local time, which is 02:45 UTC
+     * the next day. The first version took {@code LocalDate.now()} — the
+     * system's date — and converted it at {@code ZoneOffset.UTC}: so
+     * "today" meant 24 Nov locally and 24 Nov in UTC, and a comprobante
+     * uploaded three hours into 25 Nov UTC fell outside it. The history
+     * went empty every night between nine and midnight, for Argentine
+     * users only, and came back on its own by morning.
+     *
+     * <p>Same shape of bug as the CSV's decimal comma and the OCR
+     * confidence that printed {@code 0,92}: a locale or zone default
+     * leaking into business logic. Here the business logic is an
+     * accounting product used in one country, so the zone belongs to the
+     * product and not to whatever {@code TZ} the container happens to
+     * have — which in a container is usually UTC.
+     *
      * @param from  inclusive, defaults to everything
      * @param to    inclusive of the whole day, defaults to today
      * @param page  zero-based
@@ -109,11 +142,11 @@ public class JobController {
         // include the comprobantes loaded that day, and uploadedAt is an
         // instant. Compared with `<` against the next midnight, which is
         // the version of this that does not depend on clock precision.
-        Instant until = (to == null ? LocalDate.now() : to)
-                .plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant until = (to == null ? LocalDate.now(ZONE) : to)
+                .plusDays(1).atStartOfDay(ZONE).toInstant();
         Instant since = from == null
                 ? Instant.EPOCH
-                : from.atStartOfDay(ZoneOffset.UTC).toInstant();
+                : from.atStartOfDay(ZONE).toInstant();
 
         return HistoryResponse.from(jobs.findHistory(
                 currentUser.id(), since, until,

@@ -142,6 +142,7 @@ class HistoryPostgresTest extends ContainersTest {
     void anExtractedComprobanteCarriesItsSummary() {
         UUID jobId = anExtractedComprobante(owner, LocalDate.of(2032, 3, 2));
 
+
         assertThat(history())
                 .filteredOn(row -> row.jobId().equals(jobId))
                 .singleElement()

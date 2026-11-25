@@ -57,6 +57,25 @@ public record ExtractionOutput(
             return this;
         }
 
+        /**
+         * With a confidence the strategy measured instead of the source's
+         * baseline.
+         *
+         * <p>Only OCR uses this, and {@link FieldSource#OCR}'s own javadoc
+         * already promised it: “OCR adjusts it afterwards with what the
+         * engine reports; the QR needs no adjustment — it either decoded
+         * or it did not.” A baseline of 0.5 on every OCR field whether the
+         * page was a clean scan or a dark photograph would make
+         * {@code field_confidence} a constant, and a constant is not a
+         * signal.
+         */
+        public Builder put(InvoiceField field, Object value, double confidence) {
+            if (value != null) {
+                fields.put(field, new ExtractedValue(value, source, confidence));
+            }
+            return this;
+        }
+
         public Builder anomaly(String reason) {
             anomalies.add(reason);
             return this;
