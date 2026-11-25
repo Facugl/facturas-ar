@@ -94,11 +94,11 @@ esperando a que cada uno esté sano. Después:
 
 | Qué | Dónde |
 |---|---|
-| API | http://localhost:8080 |
+| **La aplicación** | **http://localhost:8081** — la SPA. Es lo que hay que abrir; la API va proxeada en el mismo origen |
+| API, directo | http://localhost:8080 |
 | Estado del servicio | http://localhost:8080/actuator/health |
 | Métricas | http://localhost:8080/actuator/prometheus |
 | Postgres | `localhost:5433`, base/usuario/clave `facturas` |
-| **La aplicación** | http://localhost:8081 — la SPA, con la API proxeada en el mismo origen |
 | Almacenamiento S3 | http://localhost:9090 |
 | **Consola de RabbitMQ** | http://localhost:15672 — `facturas`/`facturas` |
 | **Prometheus** | http://localhost:9091 — el `9090` lo usa S3Mock |
@@ -350,15 +350,15 @@ tiene. El costo es CSRF, que se maneja y no se apaga. Ver
 
 ### Criterios de aceptación del MVP
 
-1. **PDF de factura electrónica con QR legible → los 12 campos del QR correctos, en el 100% de los casos** de un set de al menos 20 comprobantes reales variados. No es un umbral optimista: el QR es un dato estructurado, o se lee o no se lee.
+1. **PDF de factura electrónica con QR legible → los 12 campos del QR correctos, en el 100% de los casos** de un set de al menos 20 comprobantes reales variados. No es un umbral optimista: el QR es un dato estructurado, o se lee o no se lee. *(🔶 **No medido como lo pide el criterio.** El PDF real que se midió entregó los 12 de 12, pero fue **uno**, no veinte — ver [cobertura medida](#cobertura-medida-sobre-comprobantes-reales). El bloqueante es el mismo que el del criterio 2: hay que juntar el set. Decirlo cumplido con n=1 sería exactamente el error que este proyecto ya cometió cuatro veces.)*
 2. **Foto de celular:** el QR se detecta **en el navegador, antes de subir**, y la foto se acepta solo si decodificó. Criterio verificable en lugar de un porcentaje: no hay foto aceptada sin QR leído. *(🔶 **Construido, sin medir.** La cámara lee en vivo con `BarcodeDetector` y `jsQR` de respaldo, y el obturador espera al QR. Pero el obturador espera **solo en la cámara**: el selector de archivos no, porque el criterio 3 pide que un comprobante sin QR entre igual — ver [ADR 017](docs/adr/017-el-frontend-va-en-el-mismo-origen.md). Cuántas fotos reales decodifican en el navegador **no está medido**, y hasta que lo esté este criterio no se declara cumplido: es justo el error que el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md) cometió una vez.)*
 3. Comprobante **sin** QR → degrada a texto/OCR sin romperse; el usuario puede completar a mano. *(✅ **Cumplido.** Verificado contra el stack real de dos formas: subiendo un PDF sin nada legible y completando ocho campos a mano hasta obtener una línea CSV válida, y subiendo un JPEG de un comprobante sin QR del que **el OCR leyó el CUIT y la razón social solo**, con `source: OCR` y confianza 0,94. Lo que falta no es código: es medirlo contra escaneos reales.)*
 4. Usuario puede corregir cualquier campo y confirmar; cada corrección queda registrada. *(✅ **Cumplido en la API**, falta la pantalla. `field_corrections` llevaba **cero filas desde la primera migración** —una apuesta del día 1— y ahora se escribe en cada revisión, con el valor viejo leído de la base y no declarado por el cliente. El campo corregido además deja de decir que vino del QR. Ver [ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md).)*
-5. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción. Un archivo ilegible o que no es una factura **no es un fallo del sistema**: el formulario sale vacío y el documento queda guardado igual.
+5. El archivo original siempre es recuperable, sin importar cómo haya salido la extracción. Un archivo ilegible o que no es una factura **no es un fallo del sistema**: el formulario sale vacío y el documento queda guardado igual. *(✅ **Cumplido por construcción, que es más fuerte que por test.** El archivo se guarda en S3 **antes** de que el `Job` exista —`UploadComprobante` llama a `store` y recién después persiste—, así que no hay orden de ejecución en el que la extracción falle y el archivo no esté. Y nada lo borra: `DocumentStorage.delete` existe en el puerto y **ningún código de producción lo llama**. La garantía es la ausencia de un camino, no una aserción sobre uno.)*
 6. Export CSV de un rango de fechas que abre en Excel y Sheets con montos como números y acentos correctos, **sin intervención manual**. *(✅ **Cumplido en los dos**, verificado abriendo el archivo. La vuelta por Excel encontró algo que ningún test podía: el CAE salía como `7,04171E+13`.)*
 7. Un usuario no puede acceder a datos de otro — con test automatizado que lo demuestre. *(✅ **Cumplido.** El test registra dos usuarios por HTTP, cada uno con su sesión; uno sube un comprobante y el otro pide ese job y recibe **404**, no 403 — un 403 confirmaría que existe. No se podía testear antes: el sustituto de autenticación atribuía todo request al mismo usuario. Ver [`AuthPostgresTest`](upload-api-service/src/test/java/ar/facturas/upload/adapters/in/rest/AuthPostgresTest.java).)*
 8. El sistema sobrevive a que el worker se caiga a mitad de un procesamiento: el mensaje se reprocesa y el resultado no se duplica. *(✅ **Cumplido.** "No se duplica" lo da el claim atómico desde la Fase 1: una reentrega encuentra el job no tomable y no hace nada. "Se reprocesa" faltaba hasta el reaper — un worker que moría entre el claim y el ack dejaba el job en `PROCESSING`, que no es un estado procesable, así que nadie lo levantaba nunca. Ver [sección 8](#el-reaper-los-jobs-que-ninguna-cola-va-a-mover).)*
-9. Siempre hay feedback visible de estado ("procesando"), aunque la Fase 1 sea síncrona.
+9. Siempre hay feedback visible de estado ("procesando"). *(✅ **Cumplido.** La pantalla pregunta por el job cada segundo y medio mientras está en vuelo y deja de preguntar sola cuando termina, y distingue **cinco finales** en vez de dos: a revisar, confirmado, duplicado, falló —que el reaper reencola solo— y sin procesar. Colapsarlos en «ok / error» tiraría justo la parte que el usuario necesita: si tiene que hacer algo.)* <br>*La redacción original decía «aunque la Fase 1 sea síncrona». Dejó de serlo cuando entró el outbox: la extracción corre del otro lado de una cola, así que el feedback pasó de ser una cortesía a ser la única forma de saber qué pasó.*
 
 > **El criterio (2) decía "≥ 85% de las fotos" y se cayó al medirlo.**
 > Primero contra el lector que había, que leyó 0 de 8 fotos. Después
@@ -1256,7 +1256,10 @@ correlacionando las dos puntas, lo que agregaría es el span y el timing
 distribuido — útil, pero ya no es lo que falta para poder depurar.
 
 ### Frontend
-- React + Vite + React Query, sin Redux (alcanza para el polling de estado, que es el único estado compartido que hay)
+- **React 19 + Vite 7 + React Query 5**, sin Redux (alcanza para el polling de estado, que es el único estado compartido que hay)
+- TypeScript 5.8 en modo `strict`, y el `tsc -b` es parte del build: una imagen que se construye desde código que no tipa es una imagen que falla más tarde y más lejos
+- **vitest 3** con jsdom — y no la 4, que no corre en este entorno; el costo de quedarse está medido y escrito en `vitest.config.ts`
+- **jsQR 1.4** como respaldo de `BarcodeDetector`
 - **Sin router**, y con fecha de vencimiento: dos pestañas y una vista de detalle no justifican una dependencia. En el momento en que haya una pantalla que valga la pena linkear desde afuera, entra `react-router`
 - Sin framework de CSS: la app son cinco pantallas y un formulario, y una librería de utilidades pesaría más que la app y pondría las decisiones de diseño en strings de clases
 - **Detección del QR en vivo con la cámara**, antes de subir: [`BarcodeDetector`](https://developer.mozilla.org/en-US/docs/Web/API/BarcodeDetector) donde existe, `jsQR` de respaldo, y **se reporta cuál de los dos leyó** — una medición que no dice qué decodificador la produjo es la que se equivocó en el [ADR 009](docs/adr/009-deteccion-del-qr-en-el-cliente.md)
@@ -1589,16 +1592,26 @@ cero.
 > `invoice.job.processing.time` en Prometheus el número es p50 103 ms y
 > p95 336 ms en contenedor, así que 2 minutos son ~360× el p95.
 >
-> El margen sigue siendo grande por dos cosas que la medición **no**
-> cubre: el OCR todavía no existe y es el caso lento de verdad, y el
-> riesgo no es simétrico — un cutoff corto hace que el reaper le robe el
-> job a un worker que todavía trabaja, y ahí deja de ser recuperación
-> para volverse duplicación.
+> El margen quedó grande por dos cosas. Una era que el OCR no existía y
+> se suponía el caso lento de verdad; la otra es que **el riesgo no es
+> simétrico** — un cutoff corto hace que el reaper le robe el job a un
+> worker que todavía trabaja, y ahí deja de ser recuperación para
+> volverse duplicación.
 >
-> Lo que hace seguro acortarlo es que ahora **el error se ve**: un cutoff
+> **Ya entró el OCR, y se volvió a medir como decía acá.** No es el caso
+> lento: tres comprobantes sin QR, procesados con Tesseract en el
+> contenedor, dieron un máximo de **1,96 s** de extracción — 1,4 a 2,6 s
+> de punta a punta contando el salto por la cola. Contra 2 minutos eso
+> sigue siendo un margen de ~60×.
+>
+> Así que la predicción era falsa y el número se queda igual, por la otra
+> razón: la asimetría. Acortarlo no compra nada — un job colgado se
+> recupera en dos minutos o en treinta segundos y al usuario le da lo
+> mismo — y equivocarse para abajo duplica trabajo.
+>
+> Lo que haría seguro acortarlo es que ahora **el error se ve**: un cutoff
 > corto aparece como un pico en `invoice_job_duplicate_delivery_total`.
-> Antes de las métricas, equivocarse era invisible. Hay que volver a
-> medirlo cuando entre el OCR.
+> Antes de las métricas, equivocarse era invisible.
 
 ### Idempotencia del worker: claim atómico
 
@@ -1688,10 +1701,10 @@ facturas-ar/
 │       ├── application/review/     # CorrectableField: qué se puede corregir
 │       │                           #   y cómo un string se vuelve ese valor
 │       ├── application/port/       # CurrentUser
-│       ├── config/security/         # SecurityConfig, AuthenticatedUser,
-│       │                           #   DatabaseUserDetailsService,
-│       │                           #   SecurityCurrentUser
-│       └── config/                 # S3, cascada, RabbitTopology
+│       ├── config/                 # S3, cascada, RabbitTopology
+│       └── config/security/        # SecurityConfig, AuthenticatedUser,
+│                                   #   DatabaseUserDetailsService,
+│                                   #   SecurityCurrentUser
 │
 ├── shared-events/                  # contratos de los mensajes, cero dependencias
 │   │                               #   (ni Jackson: ver ADR 011)
