@@ -304,7 +304,11 @@ class HistoryPostgresTest extends ContainersTest {
     void theFilterIsOnTheUploadDate() {
         UUID oldInvoice = anExtractedComprobante(owner, LocalDate.of(2020, 7, 1));
 
-        LocalDate today = LocalDate.now();
+        // JobController.ZONE and not LocalDate.now(): the endpoint turns
+        // these dates into instants in Buenos Aires, so a test that asks
+        // "what day is it" in the machine's own zone is asserting that
+        // the machine is in Argentina. See that constant's javadoc.
+        LocalDate today = LocalDate.now(JobController.ZONE);
 
         assertThat(idsIn(controller.history(today, today, 0, 100).jobs()))
                 .as("uploaded today, so it is in today's range whatever it says on the paper")
@@ -326,7 +330,7 @@ class HistoryPostgresTest extends ContainersTest {
     @DisplayName("un rango de un solo dia incluye lo cargado ese dia")
     void aSingleDayRangeIncludesThatDay() {
         UUID jobId = anExtractedComprobante(owner, LocalDate.of(2032, 6, 1));
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(JobController.ZONE);
 
         assertThat(idsIn(controller.history(today, today, 0, 100).jobs()))
                 .contains(jobId);

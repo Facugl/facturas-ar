@@ -179,4 +179,39 @@
       </dependency>
     </dependencies>
   </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <configuration>
+            <!--
+              Los tests corren en UTC, siempre y en todas las maquinas.
+
+              No es una preferencia: CI corre en UTC y esta laptop en
+              UTC-3, y esa diferencia ya rompio dos veces. La segunda fue
+              asi: el endpoint del historial convierte fechas usando la
+              zona de Argentina (que es una decision del dominio, ver
+              JobController.ZONE) y el test las convertia con la zona del
+              sistema. O sea que el test afirmaba "esta maquina esta en
+              Argentina" — pasaba local y fallaba en CI las tres horas
+              por dia en que las dos zonas no coinciden sobre que dia es.
+              La corrida que lo encontro arranco 02:22 UTC, que son las
+              23:22 del dia anterior en Buenos Aires.
+
+              Un test que falla el 13% de las veces es peor que uno que
+              falla siempre: el intermitente se reintenta y se olvida.
+              Con esto, cualquier supuesto sobre la zona del sistema se
+              rompe en el primer `mvn test` de quien lo escribio, no de
+              madrugada en el servidor de otro.
+            -->
+            <argLine>-Duser.timezone=UTC</argLine>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+
 </project>

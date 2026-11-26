@@ -213,6 +213,26 @@ default del entorno —idioma, locale, zona— metiéndose en una decisión del
 dominio.** No es casualidad que aparezcan juntos; es el mismo descuido con
 tres caras.
 
+> **Y hubo un cuarto, que fue el mismo de la zona por segunda vez.** El
+> arreglo puso la zona de Argentina en el controller y dejó el test
+> llamando a `LocalDate.now()` con la del sistema — o sea que el test
+> afirmaba *que la máquina está en Argentina*. Pasaba en una laptop en
+> UTC-3 y fallaba en CI, que corre en UTC, las tres horas por día en que
+> las dos no coinciden sobre qué día es. Lo encontró una corrida que
+> arrancó 02:22 UTC.
+>
+> Dos arreglos, y el segundo importa más. El primero: **una sola
+> definición** de la zona, que el test comparte con el controller — dos
+> definiciones de "qué zona significa una fecha" era el bug. El segundo:
+> **los tests corren con `-Duser.timezone=UTC`**, siempre y en todas las
+> máquinas, porque CI corre en UTC y esa diferencia ya rompió dos veces.
+> Un test que falla el 13% de las veces es peor que uno que falla
+> siempre: el intermitente se reintenta y se olvida.
+>
+> Verificado revirtiendo el arreglo a propósito: con `LocalDate.now()` y
+> el JVM en UTC fallan los mismos dos tests **en la laptop**, al instante.
+> Una protección que no se probó no es una protección.
+
 ## Alternativas descartadas
 
 **Solo deskew**, que fue la decisión durante unas horas. La descarta el

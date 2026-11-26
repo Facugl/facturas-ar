@@ -45,8 +45,20 @@ public class JobController {
      * silently shift every day boundary by three hours in production
      * while being right on a developer's laptop. For a product used in
      * one country the zone is part of the domain.
+     *
+     * <p><strong>Package-private so the test shares this exact constant</strong>,
+     * and that is not convenience. The first fix made this field private
+     * and left {@code HistoryPostgresTest} calling {@code LocalDate.now()}
+     * with the system default — so the test was asserting <em>that the
+     * machine is in Argentina</em>. It passed on a laptop in UTC-3 and
+     * failed in CI, which runs in UTC, for the three hours a day when the
+     * two disagree about what day it is. The run that caught it started at
+     * 02:22 UTC, which is 23:22 the previous day in Buenos Aires.
+     *
+     * <p>Two definitions of "which zone a date means" is the bug. One is
+     * the fix.
      */
-    private static final ZoneId ZONE = ZoneId.of("America/Argentina/Buenos_Aires");
+    static final ZoneId ZONE = ZoneId.of("America/Argentina/Buenos_Aires");
 
     private final JobRepository jobs;
     private final ExtractedInvoiceDataRepository extractedData;
