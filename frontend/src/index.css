@@ -14,6 +14,7 @@
   --surface: #171a21;
   --surface-raised: #1e222b;
   --border: #2a2f3a;
+  --border-strong: #3a4150;
   --text: #e6e8ec;
   --text-dim: #9aa2b1;
   --accent: #4f8cff;
@@ -33,8 +34,19 @@
   --radius: 10px;
   --gap: 16px;
 
+  /* The side gutter. One variable so the shell, the sticky bar and the
+     safe-area padding cannot drift apart. */
+  --gutter: 16px;
+
+  /* 44px is the floor for something a thumb has to hit, and it is a
+     variable because three different components need to agree on it. */
+  --touch: 44px;
+
   color-scheme: dark;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* 16px and not smaller: iOS Safari zooms the page when a focused input
+     has a font smaller than this, which on a form of nine fields means
+     the layout jumps on every tap. */
   font-size: 16px;
   color: var(--text);
   background: var(--bg);
@@ -47,9 +59,16 @@
 body {
   margin: 0;
   background: var(--bg);
-  /* 16px of gutter on a phone, so nothing touches the edge of the glass. */
   padding: 0;
   min-height: 100vh;
+  /* Small viewport units where supported: 100vh on mobile Safari counts
+     the address bar that is about to disappear, so a full-height page
+     starts life slightly too tall. */
+  min-height: 100svh;
+  /* Nothing may push the page sideways. A single overflowing element on a
+     phone makes the whole document scroll horizontally, which looks like
+     the site is broken even when only one badge is too wide. */
+  overflow-x: hidden;
 }
 
 h1,
@@ -57,6 +76,9 @@ h2,
 h3 {
   margin: 0 0 0.5rem;
   line-height: 1.25;
+  /* A razón social is one long word more often than you would think, and
+     a comprobante's filename is always one. */
+  overflow-wrap: anywhere;
 }
 
 h1 {
@@ -77,15 +99,21 @@ p {
 .shell {
   max-width: 900px;
   margin: 0 auto;
-  padding: 16px;
+  /* The safe-area insets matter on a phone with rounded corners or a
+     home indicator: without them the gutter is 16px on a flat screen and
+     0px under the notch, and content sits in the curve. max() keeps the
+     normal gutter when there is no inset. */
+  padding: var(--gutter) max(var(--gutter), env(safe-area-inset-right))
+    var(--gutter) max(var(--gutter), env(safe-area-inset-left));
+  /* Room for the sticky action bar, so the last field is never under it. */
+  padding-bottom: calc(var(--gutter) + env(safe-area-inset-bottom));
 }
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--gap);
-  flex-wrap: wrap;
+  gap: 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
   margin-bottom: var(--gap);
@@ -94,6 +122,7 @@ p {
 .brand {
   font-weight: 650;
   letter-spacing: -0.01em;
+  min-width: 0;
 }
 
 .brand span {
@@ -103,12 +132,33 @@ p {
   display: block;
 }
 
+/*
+ * The tagline goes away on a phone. It wrapped to two lines and pushed
+ * the email and the sign-out button into a cramped corner — and it is
+ * the one piece of text on the screen that nobody needs twice: it is
+ * also the first thing on the sign-in page.
+ */
+@media (max-width: 559px) {
+  .brand span {
+    display: none;
+  }
+}
+
 .who {
   display: flex;
   align-items: center;
   gap: 10px;
   font-size: 0.85rem;
   color: var(--text-dim);
+  min-width: 0;
+}
+
+/* An email is long and the button must never be pushed off screen. */
+.who-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40vw;
 }
 
 .tabs {
@@ -128,8 +178,9 @@ button {
   background: var(--surface-raised);
   color: var(--text);
   cursor: pointer;
-  /* 44px is the floor for something a thumb has to hit. */
-  min-height: 44px;
+  min-height: var(--touch);
+  /* Stops the grey flash iOS paints over a tapped button. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 button:hover:not(:disabled) {
@@ -158,6 +209,37 @@ button.tab[aria-selected='true'] {
   color: var(--text);
 }
 
+/*
+ * The unlock affordance on a read-only QR field.
+ *
+ * It used to be an inline-styled button with `min-height: auto` and 2px
+ * of padding — about 20px tall, which is half the floor and genuinely
+ * hard to hit with a thumb. Now it keeps its small visual footprint and
+ * takes the touch area from a transparent inset, which is the standard
+ * way to have both.
+ */
+button.unlock {
+  position: relative;
+  min-height: 0;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  background: transparent;
+  border-color: transparent;
+}
+
+button.unlock::after {
+  content: '';
+  position: absolute;
+  /* Grows the hit area to the 44px floor without moving a pixel of ink. */
+  inset: calc((var(--touch) - 100%) / -2) -8px;
+}
+
+button.unlock:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+
 label {
   display: block;
   font-size: 0.8rem;
@@ -173,7 +255,7 @@ input {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
-  min-height: 44px;
+  min-height: var(--touch);
 }
 
 input:focus,
@@ -185,6 +267,7 @@ button:focus-visible {
 input:read-only {
   background: var(--surface);
   color: var(--text-dim);
+  cursor: default;
 }
 
 /* ── Cards ───────────────────────────────────────────────────────── */
@@ -199,6 +282,18 @@ input:read-only {
 
 .card > :last-child {
   margin-bottom: 0;
+}
+
+/*
+ * The card the person is meant to act on.
+ *
+ * Without this every card had the same weight, so a screen showing the
+ * job's status above the review form gave no hint about where the work
+ * is. One border is enough to say it.
+ */
+.card.primary {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
 }
 
 .muted {
@@ -221,7 +316,32 @@ input:read-only {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  align-items: center;
   margin-top: var(--gap);
+}
+
+/*
+ * On a phone a button that is 40% of the width looks like it might not be
+ * the main one. Full width removes the question.
+ */
+@media (max-width: 559px) {
+  .actions > button {
+    flex: 1 1 100%;
+  }
+
+  /*
+   * And every filter stacks, including the button next to it.
+   *
+   * Left to flex, a pair of date inputs sat side by side in one card and
+   * stacked in the next — the difference being whether a third item had
+   * wrapped first. Two layouts for the same control is worse than either
+   * one, and at this width stacked is the better of the two: a date input
+   * with its calendar icon is about 170px of intrinsic width, so side by
+   * side they are squeezed to the point of hiding the year.
+   */
+  .row > * {
+    flex: 1 1 100%;
+  }
 }
 
 /* ── Badges ──────────────────────────────────────────────────────── */
@@ -252,10 +372,6 @@ input:read-only {
 .badge.user {
   background: var(--user);
   color: #eaf0ff;
-}
-.badge.none {
-  background: var(--border);
-  color: var(--text-dim);
 }
 
 .status {
@@ -340,10 +456,24 @@ input:read-only {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 4px;
+  /* The badge keeps its size; the label gives way. Without this a long
+     label on a narrow screen pushes the badge off the edge. */
+  min-width: 0;
 }
 
 .field-head label {
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-head > span {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
 }
 
 .field-note {
@@ -356,6 +486,42 @@ input:read-only {
   color: #f0a8a8;
 }
 
+/*
+ * The confirm button, pinned to the bottom on a phone.
+ *
+ * Nine fields is more than one screen, so without this the person scrolls
+ * to the end to find the action, and after correcting a field in the
+ * middle has to scroll again. On a wide screen there is no such distance,
+ * so it stays in the flow.
+ */
+.form-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: var(--gap);
+}
+
+@media (max-width: 559px) {
+  .form-actions {
+    position: sticky;
+    bottom: 0;
+    margin: var(--gap) calc(var(--gutter) * -1) 0;
+    padding: 12px var(--gutter) calc(12px + env(safe-area-inset-bottom));
+    background: linear-gradient(transparent, var(--surface-raised) 18%);
+    border-top: 1px solid var(--border);
+  }
+
+  .form-actions > button {
+    flex: 1 1 100%;
+  }
+
+  .form-actions > .muted {
+    flex: 1 1 100%;
+    text-align: center;
+  }
+}
+
 /* ── Camera ──────────────────────────────────────────────────────── */
 
 .viewfinder {
@@ -365,6 +531,7 @@ input:read-only {
   overflow: hidden;
   aspect-ratio: 3 / 4;
   max-height: 60vh;
+  max-height: 60svh;
 }
 
 .viewfinder video {
@@ -406,10 +573,19 @@ input:read-only {
 
 /* ── History ─────────────────────────────────────────────────────── */
 
+/*
+ * A row is a grid and not a flex line, so the title column is the one
+ * that gives way. As a flex row, a long razón social squeezed the amount
+ * and the badge until they wrapped into each other.
+ */
 .history-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'title amount'
+    'meta  status';
+  gap: 2px 12px;
   align-items: center;
-  gap: 12px;
   width: 100%;
   text-align: left;
   padding: 12px;
@@ -424,22 +600,42 @@ input:read-only {
   border-color: var(--accent-dim);
 }
 
-.history-main {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
 .history-title {
+  grid-area: title;
   font-weight: 550;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.history-meta {
+  grid-area: meta;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .history-amount {
-  flex: 0 0 auto;
+  grid-area: amount;
+  justify-self: end;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.history-row .status {
+  grid-area: status;
+  justify-self: end;
+}
+
+@media (min-width: 560px) {
+  /* With room, everything fits on one line. */
+  .history-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: 'title amount status' 'meta amount status';
+  }
 }
 
 .spinner {
@@ -465,14 +661,52 @@ input:read-only {
   }
 }
 
+/* ── Upload ──────────────────────────────────────────────────────── */
+
+/*
+ * The drop zone. Only a decoration on a phone, where there is nothing to
+ * drag — but on a desktop, dragging a PDF onto the page is what people
+ * try first, and before this the page simply opened the file and
+ * navigated away from the app.
+ */
+.dropzone {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--gap);
+  text-align: center;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+
+.dropzone.over {
+  border-color: var(--accent);
+  background: rgba(79, 140, 255, 0.08);
+}
+
 /* ── Sign in ─────────────────────────────────────────────────────── */
 
 .signin {
   max-width: 380px;
-  margin: 8vh auto;
-  padding: 16px;
+  margin: 0 auto;
+  /* Less top margin on a short screen: 8vh on a landscape phone pushed
+     the password field under the keyboard. */
+  padding: clamp(16px, 6vh, 64px) var(--gutter);
 }
 
 .signin .field {
   margin-bottom: 12px;
+}
+
+/*
+ * Only where dragging is possible. A phone has nothing to drag, and
+ * telling somebody to do something they cannot is worse than saying
+ * nothing — so the hint appears with the pointer, not with the width.
+ */
+.dropzone-hint {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .dropzone-hint {
+    display: block;
+  }
 }

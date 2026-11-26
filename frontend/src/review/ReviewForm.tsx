@@ -106,7 +106,7 @@ export function ReviewForm({ job, onConfirmed }: { job: Job; onConfirmed: () => 
   const changed = FIELDS.filter((field) => values[field.name] !== initial[field.name])
 
   return (
-    <form className="card" onSubmit={submit}>
+    <form className="card primary" onSubmit={submit}>
       <h2>Revisar antes de confirmar</h2>
       <p className="muted">
         Cada campo dice de dónde salió. Los que vienen del QR son datos oficiales de
@@ -125,10 +125,14 @@ export function ReviewForm({ job, onConfirmed }: { job: Job; onConfirmed: () => 
                 <span>
                   <SourceBadge source={sources[field.sourceKey]} />
                   {locked && (
+                    // `unlock` and not an inline style: it kept its small
+                    // look through a 20px box, which is half the 44px a
+                    // thumb needs. The class grows the hit area with a
+                    // transparent inset instead — same ink, reachable.
                     <button
                       type="button"
-                      className="quiet"
-                      style={{ padding: '2px 8px', minHeight: 'auto', marginLeft: 6 }}
+                      className="unlock"
+                      aria-label={`Editar ${field.label}`}
                       onClick={() => unlock(field.name)}
                     >
                       editar
@@ -151,11 +155,15 @@ export function ReviewForm({ job, onConfirmed }: { job: Job; onConfirmed: () => 
         })}
       </div>
 
-      <div className="actions">
+      {/* `form-actions` and not `actions`: on a phone this sticks to the
+          bottom, because nine fields is more than one screen and the
+          person should not have to scroll to the end to find the button
+          every time they fix something in the middle. */}
+      <div className="form-actions">
         <button className="primary" type="submit" disabled={confirm.isPending}>
           {confirm.isPending ? 'Confirmando…' : 'Confirmar'}
         </button>
-        <span className="muted" style={{ alignSelf: 'center' }}>
+        <span className="muted">
           {changed.length === 0
             ? 'Sin cambios: se confirma tal como se extrajo.'
             : `${changed.length} campo${changed.length > 1 ? 's' : ''} modificado${

@@ -134,13 +134,30 @@ describe('el formulario de revision', () => {
    * both the same way would be hiding the single most useful thing it
    * knows.
    */
-  it('cada campo dice de donde salio, y el que no salio de ningun lado dice vacio', () => {
+  it('cada campo dice de donde salio', () => {
     renderForm(withQr)
+
     expect(screen.getAllByTitle(/dato oficial, exacto/)).toHaveLength(8)
     expect(screen.getByTitle(/reglas de parseo/)).toBeInTheDocument()
+  })
 
-    renderForm(withoutQr)
-    expect(screen.getAllByTitle(/no encontró este dato/)).toHaveLength(9)
+  /**
+   * And a field the extraction did not find carries **no badge at all**.
+   *
+   * <p>It used to carry a grey {@code vacío} one, and opening the screen
+   * on a real comprobante whose QR had not decoded showed why that was
+   * wrong: seven of the nine fields had it, drowning the two that said
+   * something. An empty input already looks empty.
+   *
+   * <p>So this asserts an absence, which is the honest shape: the badges
+   * are the whole idea of this form, and the test that matters is that
+   * they only appear when they mean something.
+   */
+  it('un campo que la extraccion no encontro no lleva ningun badge', () => {
+    const { container } = renderForm(withoutQr)
+
+    expect(container.querySelectorAll('.badge')).toHaveLength(0)
+    expect(screen.getAllByRole('textbox').length).toBeGreaterThan(0)
   })
 
   // ── El candado ────────────────────────────────────────────────────
@@ -163,11 +180,13 @@ describe('el formulario de revision', () => {
     renderForm(withQr)
     const user = userEvent.setup()
 
-    // Eight locked fields, so eight buttons; the CAE's is the last.
-    const unlockers = screen.getAllByRole('button', { name: 'editar' })
-    expect(unlockers).toHaveLength(8)
+    // Eight locked fields, so eight buttons. Each one names its field in
+    // its accessible label — a screen reader hearing "editar" eight times
+    // with no context cannot tell them apart — which also lets this test
+    // ask for the one it means instead of counting to the end.
+    expect(screen.getAllByRole('button', { name: /^Editar / })).toHaveLength(8)
 
-    await user.click(unlockers[unlockers.length - 1])
+    await user.click(screen.getByRole('button', { name: 'Editar CAE' }))
 
     expect(screen.getByLabelText('CAE')).not.toHaveAttribute('readonly')
     expect(screen.getByLabelText('Moneda')).toHaveAttribute('readonly')
@@ -220,7 +239,7 @@ describe('el formulario de revision', () => {
     renderForm(withQr)
     const user = userEvent.setup()
 
-    await user.click(screen.getAllByRole('button', { name: 'editar' }).at(-1)!)
+    await user.click(screen.getByRole('button', { name: 'Editar CAE' }))
     await user.clear(screen.getByLabelText('CAE'))
     await user.click(screen.getByRole('button', { name: 'Confirmar' }))
 

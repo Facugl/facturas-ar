@@ -1,6 +1,6 @@
 import { ReviewForm } from '../review/ReviewForm'
 import { useJob } from '../api/hooks'
-import { isInFlight } from '../api/types'
+import { isInFlight, type Job } from '../api/types'
 import { Notice, Spinner, StatusBadge, formatAmount, formatDate } from '../ui/Bits'
 
 /**
@@ -103,6 +103,48 @@ export function JobProgress({ jobId, onDone }: { jobId: string; onDone: () => vo
 }
 
 /**
+ * What the extraction found, in one line, skipping what it did not find.
+ *
+ * <p>The first version always printed all three parts, so a comprobante
+ * with only a razón social read
+ * {@code "PANADERÍA LA ESPIGA S.A. · — · $—"}. Two em-dashes that say
+ * "there is nothing here" next to a form that is about to say the same
+ * thing nine times.
+ */
+function summaryOf(fields: NonNullable<Job['fields']>): string {
+  const parts = [
+    fields.issuerBusinessName,
+    fields.issueDate ? formatDate(fields.issueDate) : null,
+    fields.total === undefined ? null : `$${formatAmount(fields.total)}`,
+  ].filter(Boolean)
+
+  return parts.length === 0
+    ? 'La extracción no encontró ningún dato: está todo por completar.'
+    : parts.join(' · ')
+}
+
+/**
+ * Says what kind of document it turned out to be, in words.
+ *
+ * <p>{@code sourceType} is a database enum — {@code PDF_TEXT},
+ * {@code PDF_SCANNED}, {@code IMAGE} — and it was being printed raw:
+ * "No se leyó ningún QR (PDF_TEXT)". That is an implementation detail
+ * wearing a parenthesis, and it tells the person nothing they can act on.
+ */
+function describeSource(sourceType?: string): string {
+  switch (sourceType) {
+    case 'PDF_TEXT':
+      return ', pero el PDF traía texto'
+    case 'PDF_SCANNED':
+      return ': el PDF es una imagen escaneada'
+    case 'IMAGE':
+      return ' en la foto'
+    default:
+      return ''
+  }
+}
+
+/**
  * What the cascade found, before the form.
  *
  * Says whether the QR decoded, because that one fact predicts everything
@@ -121,14 +163,11 @@ function Extracted({ job }: { job: NonNullable<ReturnType<typeof useJob>['data']
         </Notice>
       ) : (
         <Notice kind="info">
-          No se leyó ningún QR{job.sourceType ? ` (${job.sourceType})` : ''}. Lo que haya
+          No se leyó ningún QR{describeSource(job.sourceType)}. Lo que haya
           salió del texto, y lo que falte se completa a mano acá abajo.
         </Notice>
       )}
-      <p className="muted">
-        {fields.issuerBusinessName ?? 'Emisor sin identificar'} ·{' '}
-        {formatDate(fields.issueDate)} · ${formatAmount(fields.total)}
-      </p>
+      <p className="muted">{summaryOf(fields)}</p>
     </>
   )
 }

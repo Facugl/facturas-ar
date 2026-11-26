@@ -46,13 +46,22 @@ const SOURCE_LABEL: Record<FieldSource, { short: string; title: string }> = {
   USER: { short: 'vos', title: 'Lo escribiste vos durante la revisión' },
 }
 
+/**
+ * Nothing at all for a field the extraction did not find.
+ *
+ * <p>This used to render a grey {@code vacío} badge, and on a comprobante
+ * whose QR did not decode that meant <strong>seven of nine fields</strong>
+ * carried one — drowning the two that actually said something. An empty
+ * field already looks empty; the badge was repeating what the input was
+ * showing and competing with the signal for attention.
+ *
+ * <p>Found by opening the screen on a real comprobante. The badges are
+ * the whole idea of this form, so diluting them is the one thing it could
+ * not afford to do.
+ */
 export function SourceBadge({ source }: { source?: FieldSource }) {
   if (!source) {
-    return (
-      <span className="badge none" title="La extracción no encontró este dato">
-        vacío
-      </span>
-    )
+    return null
   }
   const { short, title } = SOURCE_LABEL[source]
   return (

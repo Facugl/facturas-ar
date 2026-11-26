@@ -150,19 +150,20 @@ export function History({ onOpen }: { onOpen: (jobId: string) => void }) {
 function Row({ row, onOpen }: { row: HistoryRow; onOpen: (jobId: string) => void }) {
   return (
     <button type="button" className="history-row" onClick={() => onOpen(row.jobId)}>
-      <div className="history-main">
-        <div className="history-title">
-          {row.issuerBusinessName ?? row.originalFilename}
-        </div>
-        <div className="muted">
-          {/* The type and number when they are known, and the filename
-              when they are not — which is the case this list has to
-              handle, not an edge of it. */}
-          {row.invoiceType ?? (row.invoiceTypeCode ? `Tipo ${row.invoiceTypeCode}` : null)}
-          {row.issueDate ? ` · ${formatDate(row.issueDate)}` : ''}
-          {!row.issueDate && ` · cargado ${formatDateTime(row.uploadedAt)}`}
-          {row.qrDetected === false && ' · sin QR'}
-        </div>
+      <div className="history-title">
+        {row.issuerBusinessName ?? row.originalFilename}
+      </div>
+      <div className="history-meta muted">
+        {/* The type and number when they are known, and the filename
+            when they are not — which is the case this list has to
+            handle, not an edge of it. */}
+        {[
+          row.invoiceType ?? (row.invoiceTypeCode ? `Tipo ${row.invoiceTypeCode}` : null),
+          row.issueDate ? formatDate(row.issueDate) : `cargado ${formatDateTime(row.uploadedAt)}`,
+          row.qrDetected === false ? 'sin QR' : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
       </div>
       <div className="history-amount">
         {row.total === undefined ? '' : `$${formatAmount(row.total)}`}

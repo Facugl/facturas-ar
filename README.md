@@ -26,7 +26,7 @@ vuelve solo; y todo eso se mide en Prometheus.
 
 | | |
 |---|---|
-| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, **autenticación real con sesión en cookie y CSRF**, **revisión con correcciones por campo auditadas**, **frontend React con cámara que lee el QR en vivo, formulario de revisión, historial y export**, **OCR de respaldo con Tesseract para comprobantes sin QR**, stack dockerizado, 455 tests (433 de backend —84 contra Postgres, RabbitMQ y Redis reales— y 22 de frontend), CI |
+| ✅ **Funciona hoy** | Subida de PDF/JPG/PNG, almacenamiento S3-compatible, lectura del QR, deduplicación en tres capas, razón social desde el texto del PDF, confirmación, **export CSV por rango de fechas**, **transactional outbox con su relay**, **RabbitMQ con ack manual, DLQ y su consumidor**, **reaper de jobs colgados**, **worker como servicio aparte**, **cache-aside en Redis invalidado por el worker**, **métricas custom en Prometheus con dashboard de Grafana**, **logs JSON correlacionados entre los dos servicios**, **autenticación real con sesión en cookie y CSRF**, **revisión con correcciones por campo auditadas**, **frontend React con cámara que lee el QR en vivo, formulario de revisión, historial y export**, **OCR de respaldo con Tesseract para comprobantes sin QR**, stack dockerizado, 461 tests (433 de backend —84 contra Postgres, RabbitMQ y Redis reales— y 28 de frontend), CI |
 | ⬜ **Falta** | **Medir** — el criterio 2 (cuántas fotos reales decodifican en el navegador) y el OCR contra escaneos reales. Las dos necesitan comprobantes que no están en el repo, y ninguna se declara cumplida sin datos |
 
 **La API hoy:** `POST /auth/register` · `POST /auth/login` ·
@@ -1288,6 +1288,26 @@ no es menor: **lo que se desarrolla es lo que se despliega**. Todo en el
 | **El formulario manda los nueve campos siempre** | Qué cuenta como corrección lo decide el servidor ([ADR 016](docs/adr/016-el-servidor-calcula-el-diff-de-la-revision.md)). Así el formulario no lleva la cuenta de lo que se tocó y no puede equivocarse |
 | **Dos rangos de fecha en el historial** | La lista filtra por fecha de **carga** y el export por fecha de **emisión**, rotulados así. Una factura de marzo cargada en mayo pertenece a marzo en un archivo contable y a mayo en "qué hice hoy" |
 | **La cámara se apaga de verdad** | Los *tracks* del stream se detienen al desmontar. Sin eso el teléfono sigue grabando con la luz prendida, que desde afuera se ve igual que spyware |
+
+**Lo que cambió la primera vez que abrí la pantalla.** Había 22 tests de
+frontend y el tipado completo, y aun así mirarla con un comprobante real
+adentro cambió cinco cosas que ningún test iba a decir:
+
+| | |
+|---|---|
+| **El badge `VACÍO` era ruido** | En un comprobante cuyo QR no decodificó, **siete de nueve** campos lo llevaban, tapando a los dos que decían algo. Un campo vacío ya se ve vacío. Ahora no lleva badge: los badges son la idea entera del formulario, así que diluirlos es lo único que no se podía permitir |
+| **El botón "editar" medía 22 px** | Le había puesto `min-height: auto` para que fuera discreto, y quedó en la mitad del piso de 44 px. Ahora conserva el tamaño visual y toma el área táctil de un pseudo-elemento transparente — medido: 46 px de alto, y `elementFromPoint` a 9 px por encima devuelve el botón |
+| **El resumen decía `· — · $—`** | Dos rayas que dicen "acá no hay nada" justo arriba de un formulario que lo va a decir nueve veces |
+| **Se filtraba un enum** | *"No se leyó ningún QR (PDF_TEXT)"*. Un detalle de implementación entre paréntesis |
+| **Arrastrar un archivo abría el PDF** | Y sacaba de la aplicación, perdiendo lo que hubiera en pantalla. Es lo primero que alguien intenta en escritorio |
+
+Y lo responsive se revisó a 390 px: la barra de **Confirmar se pega abajo**
+en el teléfono — nueve campos son más de una pantalla, y sin eso hay que
+bajar hasta el final cada vez que se corrige algo del medio —, el
+subtítulo de la marca se esconde para que el email y *Salir* entren en una
+línea, los filtros de fecha se apilan igual en las dos tarjetas (antes
+uno quedaba lado a lado y el otro apilado), y hay `env(safe-area-inset-*)`
+para que nada quede bajo la barra inferior de un iPhone.
 
 ### Infraestructura local
 - Docker Compose. Hoy levanta lo que el código usa: **Postgres 16**, **Adobe S3Mock**, **RabbitMQ 3.13** y la propia API. Redis, Prometheus y Grafana entran en las Fases 2 y 3.

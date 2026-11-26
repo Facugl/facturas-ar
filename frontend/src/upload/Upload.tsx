@@ -29,6 +29,7 @@ export function Upload() {
   const [jobId, setJobId] = useState<string | null>(null)
   const [cameraOpen, setCameraOpen] = useState(false)
   const [duplicate, setDuplicate] = useState(false)
+  const [draggingOver, setDraggingOver] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const upload = useUpload()
@@ -76,7 +77,7 @@ export function Upload() {
   }
 
   return (
-    <div className="card">
+    <div className="card primary">
       <h2>Subir un comprobante</h2>
       <p className="muted">
         Un PDF de factura electrónica, o una foto. Lo que el QR traiga sale exacto; el
@@ -85,18 +86,52 @@ export function Upload() {
 
       {upload.error && <Notice kind="error">{messageFor(upload.error)}</Notice>}
 
-      <div className="actions">
-        <button
-          className="primary"
-          type="button"
-          onClick={() => fileInput.current?.click()}
-          disabled={upload.isPending}
-        >
-          {upload.isPending ? 'Subiendo…' : 'Elegir un archivo'}
-        </button>
-        <button type="button" onClick={() => setCameraOpen(true)} disabled={upload.isPending}>
-          Usar la cámara
-        </button>
+      {/*
+        Dragging a file onto the page is the first thing somebody tries on
+        a desktop, and before this the browser did its default: opened the
+        PDF and navigated away from the app, losing whatever was on screen.
+        Both handlers have to preventDefault — dragOver as well as drop —
+        or the drop never fires and the navigation happens anyway.
+      */}
+      <div
+        className={`dropzone ${draggingOver ? 'over' : ''}`}
+        onDragOver={(event) => {
+          event.preventDefault()
+          setDraggingOver(true)
+        }}
+        onDragLeave={() => setDraggingOver(false)}
+        onDrop={(event) => {
+          event.preventDefault()
+          setDraggingOver(false)
+          const file = event.dataTransfer.files?.[0]
+          if (file) {
+            void send(file)
+          }
+        }}
+      >
+        <div className="actions" style={{ marginTop: 0, justifyContent: 'center' }}>
+          <button
+            className="primary"
+            type="button"
+            onClick={() => fileInput.current?.click()}
+            disabled={upload.isPending}
+          >
+            {upload.isPending ? 'Subiendo…' : 'Elegir un archivo'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setCameraOpen(true)}
+            disabled={upload.isPending}
+          >
+            Usar la cámara
+          </button>
+        </div>
+        {/* Only mentioned where it is possible: a phone has nothing to
+            drag, and telling somebody to do something they cannot is
+            worse than saying nothing. */}
+        <div className="field-note dropzone-hint">
+          o arrastrá el archivo acá
+        </div>
       </div>
 
       <input

@@ -57,7 +57,9 @@ export function App() {
           <span>De la foto de un comprobante al CSV</span>
         </div>
         <div className="who">
-          <span>{identity.email}</span>
+          <span className="who-email" title={identity.email}>
+            {identity.email}
+          </span>
           <button
             type="button"
             className="quiet"
